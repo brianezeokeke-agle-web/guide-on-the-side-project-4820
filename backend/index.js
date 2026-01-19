@@ -1,7 +1,36 @@
+require("dotenv").config();
+
 const express = require("express");
+const fs = require("fs");
+const path = require("path");
+
 const app = express();
 
-//boilerplate listener code to ensure the API is running
-app.listen(4000, () => {
-  console.log("The server is running on port 4000");
+app.use(express.json());
+
+// load config from the .env file
+const PORT = process.env.PORT || 4000;
+const DATA_FILE_PATH = process.env.DATA_FILE_PATH;
+
+// resolve path properly
+const dataPath = path.resolve(DATA_FILE_PATH);
+
+// load the data in
+let tutorials = [];
+
+if (fs.existsSync(dataPath)) {
+  const raw = fs.readFileSync(dataPath);
+  tutorials = JSON.parse(raw);
+} else {
+  tutorials = [];
+}
+
+// example route
+app.get("/api/tutorials", (req, res) => {
+  res.json(tutorials);
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  console.log(`Using data file: ${DATA_FILE_PATH}`);
 });

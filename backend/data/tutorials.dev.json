@@ -1,1 +1,11 @@
-[]
+[
+  {
+    "tutorialId": "613e9461-e90e-4702-b5e8-d67bbaddc66c",
+    "title": "Library Search Basics",
+    "description": "Intro tutorial",
+    "status": "draft",
+    "createdAt": "2026-01-23T19:06:03.733Z",
+    "updatedAt": "2026-01-23T19:06:03.734Z",
+    "slides": []
+  }
+]

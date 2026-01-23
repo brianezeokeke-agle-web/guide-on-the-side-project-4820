@@ -1,36 +1,27 @@
 require("dotenv").config();
 
 const express = require("express");
-const fs = require("fs");
 const path = require("path");
 
-const app = express();
+const { loadTutorials } = require("./persistence/tutorialStore");
 
+const app = express();
 app.use(express.json());
+
+//Static uploads folder
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // load config from the .env file
 const PORT = process.env.PORT || 4000;
-const DATA_FILE_PATH = process.env.DATA_FILE_PATH;
 
-// resolve path properly
-const dataPath = path.resolve(DATA_FILE_PATH);
+// Load tutorials once on startup
+let tutorials = loadTutorials();
 
-// load the data in
-let tutorials = [];
-
-if (fs.existsSync(dataPath)) {
-  const raw = fs.readFileSync(dataPath);
-  tutorials = JSON.parse(raw);
-} else {
-  tutorials = [];
-}
-
-// example route
-app.get("/api/tutorials", (req, res) => {
-  res.json(tutorials);
-});
+//mount & use the endpoints
+const tutorialRoutes = require("./routes/tutorials.routes");
+app.use("/api/tutorials", tutorialRoutes);
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Using data file: ${DATA_FILE_PATH}`);
+  console.log(`Server running on port ${PORT}`); 
+  console.log(`Using data file: ${process.env.DATA_FILE_PATH}`);
 });

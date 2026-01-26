@@ -21,7 +21,11 @@ let tutorials = loadTutorials();
 const tutorialRoutes = require("./routes/tutorials.routes");
 app.use("/api/tutorials", tutorialRoutes);
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`); 
-  console.log(`Using data file: ${process.env.DATA_FILE_PATH}`);
-});
+module.exports = app;
+
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`); 
+    console.log(`Using data file: ${process.env.DATA_FILE_PATH}`);
+  });
+}

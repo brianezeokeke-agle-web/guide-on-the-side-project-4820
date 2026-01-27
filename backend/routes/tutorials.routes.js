@@ -5,6 +5,16 @@ console.log("tutorials.routes.js loaded");
 const express = require("express");
 const { v4: uuidv4 } = require("uuid");
 
+//function to create empty slide
+function createEmptySlide(order) {
+  return {
+    slideId: uuidv4(),
+    order,
+    leftPane: null,
+    rightPane: null,
+  };
+}
+
 const {
   loadTutorials,
   saveTutorials,
@@ -52,7 +62,10 @@ router.post("/", (req, res) => {
     status: "draft",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    slides: [],
+    slides: [
+        createEmptySlide(1),
+        createEmptySlide(2)
+    ]
   };
 
   tutorials.push(newTutorial);
@@ -76,14 +89,16 @@ router.put("/:id", (req, res) => {
   }
 
   // Some fields are immutable and should be preserved as such
-  updatedTutorial.tutorialId = id;
-  updatedTutorial.createdAt = tutorials[index].createdAt;
-  updatedTutorial.updatedAt = new Date().toISOString();
-
-  tutorials[index] = updatedTutorial;
+  tutorials[index] = {
+  ...tutorials[index],
+  ...updatedTutorial,
+  tutorialId: id,
+  createdAt: tutorials[index].createdAt,
+  updatedAt: new Date().toISOString(),
+};
   saveTutorials(tutorials);
 
-  res.json(updatedTutorial);
+  res.json(tutorials[index]);
 });
 
 module.exports = router;

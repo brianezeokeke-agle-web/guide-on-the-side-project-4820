@@ -1,11 +1,13 @@
 require("dotenv").config();
 
+const cors = require("cors"); //add cors to clear cors error
 const express = require("express");
 const path = require("path");
 
 const { loadTutorials } = require("./persistence/tutorialStore");
 
 const app = express();
+app.use(cors()); //use cors 
 app.use(express.json());
 
 //Static uploads folder

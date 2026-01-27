@@ -42,20 +42,22 @@ export default function CreateTutorialPage() {
         <h1>Create Tutorial</h1>
 
         <div style={styles.form}>
-          <label>
+          <label style={styles.label}>
             Title
             <input
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
+              style={styles.input}
             />
           </label>
 
-          <label>
+          <label style={styles.label}>
             Description (optional)
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
+              style={styles.textarea}
             />
           </label>
 
@@ -84,6 +86,24 @@ const styles = {
     flexDirection: "column",
     gap: "16px",
     maxWidth: "400px",
+  },
+  label: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+    width: "100%",
+  },
+  input: {
+    width: "100%",
+    padding: "8px",
+    boxSizing: "border-box",
+  },
+  textarea: {
+    width: "100%",
+    padding: "8px",
+    boxSizing: "border-box",
+    minHeight: "100px",
+    resize: "vertical",
   },
   actions: {
     display: "flex",

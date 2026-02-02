@@ -372,5 +372,81 @@
         "rightPane": null
       }
     ]
+  },
+  {
+    "tutorialId": "e51316e1-ca81-4569-82c9-5c02911e0781",
+    "title": "Test_Tutorials",
+    "description": "test",
+    "status": "draft",
+    "createdAt": "2026-02-02T14:12:59.671Z",
+    "updatedAt": "2026-02-02T14:16:52.510Z",
+    "slides": [
+      {
+        "slideId": "56fda1ad-f40d-4077-a18a-7905ee10fe88",
+        "title": "Slide 1",
+        "order": 1,
+        "leftPane": {
+          "type": "question",
+          "data": {
+            "questionType": "multipleChoice",
+            "questionTitle": "",
+            "description": "",
+            "options": [
+              {
+                "id": "a",
+                "text": ""
+              },
+              {
+                "id": "b",
+                "text": ""
+              }
+            ],
+            "correctOptionId": "",
+            "required": true,
+            "feedback": {
+              "correct": "Correct!",
+              "incorrect": "Review and try again."
+            }
+          }
+        },
+        "rightPane": {
+          "type": "media",
+          "data": {
+            "mediaType": null,
+            "url": "",
+            "filename": "",
+            "originalName": "",
+            "altText": ""
+          }
+        }
+      },
+      {
+        "slideId": "64db632f-9350-4518-b09f-4f47bf865b21",
+        "title": "Slide 2",
+        "order": 2,
+        "leftPane": {
+          "type": "textQuestion",
+          "data": {
+            "questionType": "textInput",
+            "questionTitle": "",
+            "description": "",
+            "correctAnswer": "",
+            "caseSensitive": false,
+            "required": true,
+            "feedback": {
+              "correct": "Correct!",
+              "incorrect": "That's not quite right. Please try again."
+            }
+          }
+        },
+        "rightPane": {
+          "type": "embed",
+          "data": {
+            "url": "",
+            "fallbackText": ""
+          }
+        }
+      }
+    ]
   }
 ]

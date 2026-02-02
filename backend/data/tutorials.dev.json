@@ -5,8 +5,17 @@
     "description": "Intro tutorial",
     "status": "draft",
     "createdAt": "2026-01-23T19:06:03.733Z",
-    "updatedAt": "2026-01-23T19:06:03.734Z",
-    "slides": []
+    "updatedAt": "2026-02-02T01:53:16.332Z",
+    "slides": [
+      {
+        "slideId": "0fc46aea-6ff4-4edd-8f75-480c13815c1b",
+        "title": "Untitled Slide",
+        "order": 1,
+        "leftPane": null,
+        "rightPane": null
+      }
+    ],
+    "archived": true
   },
   {
     "tutorialId": "d0071e9e-9214-4278-a80b-0ecc21116777",
@@ -58,19 +67,25 @@
     "description": "",
     "status": "draft",
     "createdAt": "2026-01-27T01:52:46.889Z",
-    "updatedAt": "2026-01-27T01:53:34.219Z",
+    "updatedAt": "2026-02-02T02:13:41.023Z",
     "slides": [
       {
-        "slideId": "7a580900-4e99-4039-8ebc-63f9ec79e6a7",
+        "slideId": "4b704830-ddd9-4b34-af27-b44e9157737d",
+        "title": "Untitled Slide",
         "order": 1,
         "leftPane": null,
         "rightPane": null
       },
       {
-        "slideId": "295a3c44-de91-4601-afa1-e06b04a33b81",
-        "order": 2,
-        "leftPane": null,
-        "rightPane": null
+        "slideId": "7a580900-4e99-4039-8ebc-63f9ec79e6a7",
+        "rightPane": {
+          "type": "text",
+          "data": {
+            "format": "html",
+            "content": ""
+          }
+        },
+        "order": 2
       }
     ]
   },
@@ -90,6 +105,268 @@
       },
       {
         "slideId": "aa2a8b8e-893b-41f4-a9f1-7903ed024307",
+        "order": 2,
+        "leftPane": null,
+        "rightPane": null
+      }
+    ]
+  },
+  {
+    "tutorialId": "e793eaeb-7c14-41ef-951b-65fe11a151ad",
+    "title": "newest tut",
+    "description": "",
+    "status": "draft",
+    "createdAt": "2026-02-01T20:40:48.066Z",
+    "updatedAt": "2026-02-02T02:13:14.475Z",
+    "slides": [
+      {
+        "slideId": "db5593c3-d86e-4a97-bb32-76f496ec6681",
+        "title": "sample slide",
+        "order": 5,
+        "leftPane": {
+          "type": "text",
+          "data": {
+            "format": "html",
+            "content": "wysiwyg"
+          }
+        },
+        "rightPane": {
+          "type": "embed",
+          "data": {
+            "url": "https://www.youtube.com/",
+            "fallbackText": "open the embed in a new page"
+          }
+        }
+      },
+      {
+        "slideId": "b5ca12f8-6049-4e5d-91e7-b196d8d7bd6a",
+        "title": "new slide ",
+        "order": 6,
+        "leftPane": {
+          "type": "text",
+          "data": {
+            "format": "html",
+            "content": "veni vedi vici"
+          }
+        },
+        "rightPane": {
+          "type": "text",
+          "data": {
+            "format": "html",
+            "content": "some descriptive element"
+          }
+        }
+      }
+    ],
+    "archived": true
+  },
+  {
+    "tutorialId": "9b63a502-093b-4144-9699-d53b7c8738e0",
+    "title": "Test new features",
+    "description": "",
+    "status": "draft",
+    "createdAt": "2026-02-01T21:59:56.224Z",
+    "updatedAt": "2026-02-02T00:54:22.891Z",
+    "slides": [
+      {
+        "slideId": "1d8078a3-c709-4fe9-b9fa-d798319bdd47",
+        "title": "Slide 1",
+        "order": 1,
+        "leftPane": {
+          "type": "question",
+          "data": {
+            "questionType": "multipleChoice",
+            "questionTitle": "What do you see on the page ",
+            "description": "Use the content carefully",
+            "options": [
+              {
+                "id": "a",
+                "text": "100"
+              },
+              {
+                "id": "b",
+                "text": "200"
+              },
+              {
+                "id": "c",
+                "text": "300"
+              }
+            ],
+            "correctOptionId": "c",
+            "required": true,
+            "feedback": {
+              "correct": "Awesome",
+              "incorrect": "Review instructions and try again."
+            }
+          }
+        },
+        "rightPane": {
+          "type": "embed",
+          "data": {
+            "url": "https://www.youtube.com/",
+            "fallbackText": "Embed Forbidden, open content in new page"
+          }
+        }
+      },
+      {
+        "slideId": "0bd10baf-b5d0-447c-ad44-59ff5ff9cd64",
+        "title": "Slide 2",
+        "order": 2,
+        "leftPane": {
+          "type": "text",
+          "data": {
+            "format": "html",
+            "content": "Random text"
+          }
+        },
+        "rightPane": {
+          "type": "embed",
+          "data": {
+            "url": "https://moodle31.upei.ca/my/courses.php",
+            "fallbackText": ""
+          }
+        }
+      },
+      {
+        "slideId": "83ee2dad-7eb3-469d-bfa6-cfd251e28a0d",
+        "title": "Untitled Slide",
+        "order": 3,
+        "leftPane": null,
+        "rightPane": {
+          "type": "embed",
+          "data": {
+            "url": "",
+            "fallbackText": ""
+          }
+        }
+      },
+      {
+        "slideId": "2d16e147-22d4-4b85-820a-44dbcfcd4076",
+        "title": "Untitled Slide",
+        "order": 4,
+        "leftPane": {
+          "type": "textQuestion",
+          "data": {
+            "questionType": "textInput",
+            "questionTitle": "You're a member of the ________ Library.",
+            "description": "",
+            "correctAnswer": "springy",
+            "caseSensitive": false,
+            "required": true,
+            "feedback": {
+              "correct": "Correct!",
+              "incorrect": "That's not quite right. Please try again."
+            }
+          }
+        },
+        "rightPane": {
+          "type": "embed",
+          "data": {
+            "url": "",
+            "fallbackText": ""
+          }
+        }
+      },
+      {
+        "slideId": "ce873f6c-889a-496f-bb56-b6deacd4a38d",
+        "title": "Untitled Slide",
+        "order": 5,
+        "leftPane": {
+          "type": "textQuestion",
+          "data": {
+            "questionType": "textInput",
+            "questionTitle": "",
+            "description": "",
+            "correctAnswer": "",
+            "caseSensitive": false,
+            "required": true,
+            "feedback": {
+              "correct": "Correct!",
+              "incorrect": "That's not quite right. Please try again."
+            }
+          }
+        },
+        "rightPane": {
+          "type": "media",
+          "data": {
+            "mediaType": null,
+            "url": "",
+            "filename": "",
+            "originalName": "",
+            "altText": ""
+          }
+        }
+      },
+      {
+        "slideId": "588a8c8a-fda2-4074-adda-a65584d258a9",
+        "title": "test photo upload",
+        "order": 6,
+        "leftPane": {
+          "type": "text",
+          "data": {
+            "format": "html",
+            "content": "the photo uploads correctly, but there is no success/failure indicator - prompting users to make multiple uploads"
+          }
+        },
+        "rightPane": {
+          "type": "media",
+          "data": {
+            "mediaType": null,
+            "url": "",
+            "filename": "",
+            "originalName": "",
+            "altText": ""
+          }
+        }
+      },
+      {
+        "slideId": "29bc8bfd-331d-4f68-8399-152500b578a7",
+        "title": "Test Video Upload",
+        "order": 7,
+        "leftPane": {
+          "type": "text",
+          "data": {
+            "format": "html",
+            "content": ""
+          }
+        },
+        "rightPane": {
+          "type": "media",
+          "data": {
+            "mediaType": null,
+            "url": "",
+            "filename": "",
+            "originalName": "",
+            "altText": ""
+          }
+        }
+      }
+    ]
+  },
+  {
+    "tutorialId": "c354be11-6ff5-4f90-b985-16a837fa1472",
+    "title": "Using the UPEI library",
+    "description": "",
+    "status": "draft",
+    "createdAt": "2026-02-02T02:14:25.214Z",
+    "updatedAt": "2026-02-02T02:14:55.966Z",
+    "slides": [
+      {
+        "slideId": "933abcc4-5b66-4b58-88a5-4c345ca66f8b",
+        "title": "Navigating through the Library",
+        "order": 1,
+        "leftPane": {
+          "type": "text",
+          "data": {
+            "format": "html",
+            "content": ""
+          }
+        },
+        "rightPane": null
+      },
+      {
+        "slideId": "26e77e2d-8e60-4383-a61d-567ecc18d689",
+        "title": "Slide 2",
         "order": 2,
         "leftPane": null,
         "rightPane": null

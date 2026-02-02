@@ -39,36 +39,38 @@ export default function CreateTutorialPage() {
       <Sidebar />
 
       <main style={styles.main}>
-        <h1>Create Tutorial</h1>
+        <h1 style={styles.heading}>Create Tutorial</h1>
 
         <div style={styles.form}>
           <label style={styles.label}>
-            Title
+            <span style={styles.labelText}>Title</span>
             <input
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               style={styles.input}
+              placeholder="Enter tutorial title..."
             />
           </label>
 
           <label style={styles.label}>
-            Description (optional)
+            <span style={styles.labelText}>Description (optional)</span>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               style={styles.textarea}
+              placeholder="Enter an optional description..."
             />
           </label>
 
-          {error && <p style={{ color: "red" }}>{error}</p>}
+          {error && <p style={styles.error}>{error}</p>}
 
           <div style={styles.actions}>
-            <button onClick={() => createTutorial("save")}>
+            <button style={styles.secondaryButton} onClick={() => createTutorial("save")}>
               Save Draft
             </button>
 
-            <button onClick={() => createTutorial("edit")}>
+            <button style={styles.primaryButton} onClick={() => createTutorial("edit")}>
               Add Slides
             </button>
           </div>
@@ -79,35 +81,90 @@ export default function CreateTutorialPage() {
 }
 
 const styles = {
-  container: { display: "flex", height: "100vh" },
-  main: { flexGrow: 1, padding: "32px" },
+  container: {
+    display: "flex",
+    height: "100vh",
+    fontFamily: "system-ui, -apple-system, sans-serif",
+  },
+  main: {
+    flexGrow: 1,
+    padding: "32px",
+    backgroundColor: "#fff",
+  },
+  heading: {
+    margin: "0 0 24px 0",
+    fontSize: "24px",
+    fontWeight: "600",
+    color: "#111827",
+  },
   form: {
     display: "flex",
     flexDirection: "column",
-    gap: "16px",
-    maxWidth: "400px",
+    gap: "20px",
+    maxWidth: "480px",
   },
   label: {
     display: "flex",
     flexDirection: "column",
-    gap: "8px",
+    gap: "6px",
     width: "100%",
+  },
+  labelText: {
+    fontSize: "14px",
+    fontWeight: "500",
+    color: "#374151",
   },
   input: {
     width: "100%",
-    padding: "8px",
+    padding: "10px 12px",
+    fontSize: "14px",
+    border: "1px solid #d1d5db",
+    borderRadius: "6px",
     boxSizing: "border-box",
+    outline: "none",
   },
   textarea: {
     width: "100%",
-    padding: "8px",
+    padding: "10px 12px",
+    fontSize: "14px",
+    border: "1px solid #d1d5db",
+    borderRadius: "6px",
     boxSizing: "border-box",
     minHeight: "100px",
     resize: "vertical",
+    fontFamily: "inherit",
+    outline: "none",
+  },
+  error: {
+    color: "#dc2626",
+    fontSize: "14px",
+    margin: 0,
   },
   actions: {
     display: "flex",
     gap: "12px",
-    marginTop: "16px",
+    marginTop: "8px",
+  },
+  primaryButton: {
+    padding: "10px 20px",
+    fontSize: "14px",
+    fontWeight: "500",
+    cursor: "pointer",
+    backgroundColor: "#7B2D26",
+    color: "#fff",
+    border: "none",
+    borderRadius: "6px",
+    transition: "background-color 0.15s ease",
+  },
+  secondaryButton: {
+    padding: "10px 20px",
+    fontSize: "14px",
+    fontWeight: "500",
+    cursor: "pointer",
+    backgroundColor: "#fff",
+    color: "#374151",
+    border: "1px solid #d1d5db",
+    borderRadius: "6px",
+    transition: "all 0.15s ease",
   },
 };

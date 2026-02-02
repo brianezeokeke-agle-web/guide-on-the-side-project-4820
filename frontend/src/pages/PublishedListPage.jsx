@@ -2,6 +2,24 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 
+//helper function to get relative time for last edited display
+function getRelativeTime(dateString) {
+  if (!dateString) return "";
+  const date = new Date(dateString);
+  const now = new Date();
+  const seconds = Math.floor((now - date) / 1000);
+
+  if (seconds < 60) return `${seconds} second${seconds !== 1 ? "s" : ""} ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes !== 1 ? "s" : ""} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours !== 1 ? "s" : ""} ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 365) return `${days} day${days !== 1 ? "s" : ""} ago`;
+  const years = Math.floor(days / 365);
+  return `${years} year${years !== 1 ? "s" : ""} ago`;
+}
+
 export default function PublishedListPage() {
   const [tutorials, setTutorials] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -176,7 +194,10 @@ export default function PublishedListPage() {
               style={styles.listItem}
               onClick={() => navigate(`/tutorials/${tut.tutorialId}/edit`)}
             >
-              <span style={styles.listItemTitle}>{tut.title}</span>
+              <div style={styles.listItemLeft}>
+                <span style={styles.listItemTitle}>{tut.title}</span>
+                <span style={styles.lastModified}>Last modified {getRelativeTime(tut.updatedAt)}</span>
+              </div>
               <div style={styles.listItemRight}>
                 <span style={styles.statusBadge}>published</span>
                 <div style={styles.dropdownContainer} ref={openDropdownId === tut.tutorialId ? dropdownRef : null}>
@@ -335,10 +356,19 @@ const styles = {
     backgroundColor: "#fafafa",
     transition: "all 0.3s ease",
   },
+  listItemLeft: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+  },
   listItemTitle: {
     fontSize: "14px",
     fontWeight: "500",
     color: "#111827",
+  },
+  lastModified: {
+    fontSize: "12px",
+    color: "#6b7280",
   },
   listItemRight: {
     display: "flex",

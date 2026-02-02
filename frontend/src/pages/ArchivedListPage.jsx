@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import Sidebar from "../components/Sidebar";
 
 export default function ArchivedListPage() {
   const [tutorials, setTutorials] = useState([]);
@@ -81,29 +82,40 @@ export default function ArchivedListPage() {
     return result;
   };
 
-  const handleEdit = (tutorialId) => {
+  const toggleDropdown = (e, tutorialId) => {
+    e.stopPropagation();
+    setOpenDropdownId(openDropdownId === tutorialId ? null : tutorialId);
+  };
+
+  const handleEdit = (e, tutorialId) => {
+    e.stopPropagation();
     setOpenDropdownId(null);
     navigate(`/tutorials/${tutorialId}/edit`);
   };
 
-  const handleRestore = async (tutorialId) => {
+  const handleRestore = async (e, tutorialId) => {
+    e.stopPropagation();
     setOpenDropdownId(null);
     try {
       await unarchiveTutorial(tutorialId);
-      loadTutorials();
+      // Remove from local state since it's no longer archived
+      setTutorials((prev) => prev.filter((t) => t.tutorialId !== tutorialId));
     } catch (err) {
       console.error("Failed to restore tutorial:", err);
     }
   };
 
-  const handleDelete = async (tutorialId) => {
+  const handleDelete = (e, tutorialId) => {
+    e.stopPropagation();
     setOpenDropdownId(null);
     // TODO: Implement permanent delete functionality with confirmation
-    console.log("Delete tutorial permanently:", tutorialId);
+    alert("Delete permanently functionality coming soon!");
   };
 
-  const toggleDropdown = (tutorialId) => {
-    setOpenDropdownId(openDropdownId === tutorialId ? null : tutorialId);
+  const handlePreview = (e) => {
+    e.stopPropagation();
+    setOpenDropdownId(null);
+    alert("Preview functionality coming soon!");
   };
 
   const displayedTutorials = getSortedAndFilteredTutorials();
@@ -113,14 +125,15 @@ export default function ArchivedListPage() {
 
   return (
     <div style={styles.container}>
-      <header style={styles.header}>
-        <div style={styles.headerTop}>
-          <h1 style={styles.title}>Archived Tutorials</h1>
+      <Sidebar />
+
+      <main style={styles.main}>
+        <div style={styles.header}>
+          <h1 style={styles.heading}>Archived Tutorials</h1>
           <Link to="/tutorials" style={styles.backLink}>
-            ← Back to All Tutorials
+            Back to All Tutorials
           </Link>
         </div>
-      </header>
 
       <div style={styles.controlsContainer}>
         <div style={styles.searchContainer}>
@@ -149,87 +162,104 @@ export default function ArchivedListPage() {
         </div>
       </div>
 
-      {displayedTutorials.length === 0 ? (
-        <div style={styles.emptyState}>
+        {displayedTutorials.length === 0 ? (
           <p style={styles.emptyText}>
             {searchQuery.trim()
               ? "No archived tutorials match your search."
               : "Archived tutorials will appear here."}
           </p>
-        </div>
-      ) : (
+        ) : (
         <ul style={styles.list}>
-          {displayedTutorials.map((t) => (
-            <li key={t.tutorialId} style={styles.listItem}>
-              <div style={styles.tutorialInfo}>
-                <span style={styles.tutorialTitle}>{t.title}</span>
-                <span style={styles.archivedBadge}>Archived</span>
-              </div>
-              <div style={styles.actionsContainer} ref={openDropdownId === t.tutorialId ? dropdownRef : null}>
-                <button
-                  style={styles.menuButton}
-                  onClick={() => toggleDropdown(t.tutorialId)}
-                  aria-label="Tutorial actions"
-                >
-                  ⋮
-                </button>
-                {openDropdownId === t.tutorialId && (
-                  <div style={styles.dropdownMenu}>
-                    <button
-                      style={styles.dropdownItem}
-                      onClick={() => handleEdit(t.tutorialId)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      style={styles.dropdownItem}
-                      onClick={() => handleRestore(t.tutorialId)}
-                    >
-                      Restore
-                    </button>
-                    <button
-                      style={{ ...styles.dropdownItem, color: "#dc2626" }}
-                      onClick={() => handleDelete(t.tutorialId)}
-                    >
-                      Delete Permanently
-                    </button>
-                  </div>
-                )}
+          {displayedTutorials.map((tut) => (
+            <li
+              key={tut.tutorialId}
+              style={styles.listItem}
+              onClick={() => navigate(`/tutorials/${tut.tutorialId}/edit`)}
+            >
+              <span style={styles.listItemTitle}>{tut.title}</span>
+              <div style={styles.listItemRight}>
+                <span style={styles.statusBadge}>archived</span>
+                <div style={styles.dropdownContainer} ref={openDropdownId === tut.tutorialId ? dropdownRef : null}>
+                  <button
+                    style={styles.dropdownButton}
+                    onClick={(e) => toggleDropdown(e, tut.tutorialId)}
+                    title="Actions"
+                  >
+                    ▼
+                  </button>
+                  {openDropdownId === tut.tutorialId && (
+                    <div style={styles.dropdownMenu}>
+                      <button
+                        style={styles.dropdownItem}
+                        onClick={(e) => handleEdit(e, tut.tutorialId)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        style={styles.dropdownItem}
+                        onClick={(e) => handleRestore(e, tut.tutorialId)}
+                      >
+                        Restore
+                      </button>
+                      <button
+                        style={styles.dropdownItem}
+                        onClick={handlePreview}
+                      >
+                        Preview
+                      </button>
+                      <button
+                        style={{ ...styles.dropdownItem, color: "#dc2626" }}
+                        onClick={(e) => handleDelete(e, tut.tutorialId)}
+                      >
+                        Delete Permanently
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </li>
           ))}
         </ul>
-      )}
+        )}
+      </main>
     </div>
   );
 }
 
 const styles = {
   container: {
-    maxWidth: "900px",
-    margin: "0 auto",
-    padding: "40px 24px",
-    fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    display: "flex",
+    height: "100vh",
+    fontFamily: "system-ui, -apple-system, sans-serif",
+  },
+  main: {
+    flexGrow: 1,
+    padding: "32px",
+    backgroundColor: "#fff",
   },
   header: {
-    marginBottom: "24px",
-  },
-  headerTop: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
+    marginBottom: "24px",
   },
-  title: {
-    fontSize: "28px",
-    fontWeight: "600",
-    color: "#1f2937",
+  heading: {
     margin: 0,
+    fontSize: "24px",
+    fontWeight: "600",
+    color: "#111827",
   },
   backLink: {
+    padding: "10px 16px",
     fontSize: "14px",
-    color: "#7B2D26",
-    textDecoration: "none",
     fontWeight: "500",
+    cursor: "pointer",
+    backgroundColor: "#7B2D26",
+    color: "#fff",
+    textDecoration: "none",
+    border: "none",
+    borderRadius: "6px",
+    transition: "background-color 0.15s ease",
   },
   controlsContainer: {
     marginBottom: "24px",
@@ -274,16 +304,9 @@ const styles = {
     cursor: "pointer",
     minWidth: "180px",
   },
-  emptyState: {
-    textAlign: "center",
-    padding: "60px 20px",
-    backgroundColor: "#f9fafb",
-    borderRadius: "8px",
-    border: "1px dashed #d1d5db",
-  },
   emptyText: {
-    fontSize: "16px",
     color: "#6b7280",
+    fontSize: "14px",
   },
   loadingText: {
     textAlign: "center",
@@ -299,50 +322,50 @@ const styles = {
     listStyle: "none",
     padding: 0,
     margin: 0,
-    display: "flex",
-    flexDirection: "column",
-    gap: "12px",
   },
   listItem: {
     display: "flex",
-    justifyContent: "space-between",
     alignItems: "center",
-    padding: "16px 20px",
-    backgroundColor: "#fff",
+    justifyContent: "space-between",
+    cursor: "pointer",
+    padding: "12px 16px",
+    marginBottom: "8px",
+    borderRadius: "6px",
     border: "1px solid #e5e7eb",
-    borderRadius: "8px",
-    transition: "box-shadow 0.15s ease",
+    backgroundColor: "#fafafa",
+    transition: "all 0.3s ease",
   },
-  tutorialInfo: {
+  listItemTitle: {
+    fontSize: "14px",
+    fontWeight: "500",
+    color: "#111827",
+  },
+  listItemRight: {
     display: "flex",
     alignItems: "center",
     gap: "12px",
   },
-  tutorialTitle: {
-    fontSize: "16px",
-    fontWeight: "500",
-    color: "#1f2937",
-  },
-  archivedBadge: {
-    padding: "4px 8px",
+  statusBadge: {
+    display: "inline-block",
+    padding: "4px 10px",
     fontSize: "12px",
     fontWeight: "500",
+    borderRadius: "9999px",
     backgroundColor: "#f3f4f6",
     color: "#6b7280",
-    borderRadius: "4px",
+    textTransform: "capitalize",
   },
-  actionsContainer: {
+  dropdownContainer: {
     position: "relative",
   },
-  menuButton: {
-    padding: "8px 12px",
-    fontSize: "18px",
-    fontWeight: "bold",
+  dropdownButton: {
+    padding: "6px 10px",
+    fontSize: "10px",
     cursor: "pointer",
-    backgroundColor: "transparent",
-    color: "#6b7280",
-    border: "1px solid #e5e7eb",
-    borderRadius: "6px",
+    backgroundColor: "#f3f4f6",
+    border: "1px solid #d1d5db",
+    borderRadius: "4px",
+    color: "#374151",
     transition: "background-color 0.15s ease",
   },
   dropdownMenu: {
@@ -350,24 +373,26 @@ const styles = {
     top: "100%",
     right: 0,
     marginTop: "4px",
+    minWidth: "140px",
     backgroundColor: "#fff",
     border: "1px solid #e5e7eb",
-    borderRadius: "8px",
-    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.1)",
+    borderRadius: "6px",
+    boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)",
     zIndex: 100,
-    minWidth: "160px",
     overflow: "hidden",
   },
   dropdownItem: {
-    display: "block",
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
     width: "100%",
-    padding: "10px 16px",
-    fontSize: "14px",
+    padding: "10px 12px",
+    fontSize: "13px",
     color: "#374151",
     backgroundColor: "transparent",
     border: "none",
-    textAlign: "left",
     cursor: "pointer",
+    textAlign: "left",
     transition: "background-color 0.15s ease",
   },
 };

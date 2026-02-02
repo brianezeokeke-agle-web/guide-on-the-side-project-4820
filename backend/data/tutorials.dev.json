@@ -67,8 +67,15 @@
     "description": "",
     "status": "draft",
     "createdAt": "2026-01-27T01:52:46.889Z",
-    "updatedAt": "2026-02-01T21:10:52.673Z",
+    "updatedAt": "2026-02-02T02:13:41.023Z",
     "slides": [
+      {
+        "slideId": "4b704830-ddd9-4b34-af27-b44e9157737d",
+        "title": "Untitled Slide",
+        "order": 1,
+        "leftPane": null,
+        "rightPane": null
+      },
       {
         "slideId": "7a580900-4e99-4039-8ebc-63f9ec79e6a7",
         "rightPane": {
@@ -77,7 +84,8 @@
             "format": "html",
             "content": ""
           }
-        }
+        },
+        "order": 2
       }
     ]
   },
@@ -109,7 +117,7 @@
     "description": "",
     "status": "draft",
     "createdAt": "2026-02-01T20:40:48.066Z",
-    "updatedAt": "2026-02-01T21:39:03.639Z",
+    "updatedAt": "2026-02-02T02:13:14.475Z",
     "slides": [
       {
         "slideId": "db5593c3-d86e-4a97-bb32-76f496ec6681",
@@ -149,7 +157,8 @@
           }
         }
       }
-    ]
+    ],
+    "archived": true
   },
   {
     "tutorialId": "9b63a502-093b-4144-9699-d53b7c8738e0",
@@ -331,6 +340,36 @@
             "altText": ""
           }
         }
+      }
+    ]
+  },
+  {
+    "tutorialId": "c354be11-6ff5-4f90-b985-16a837fa1472",
+    "title": "Using the UPEI library",
+    "description": "",
+    "status": "draft",
+    "createdAt": "2026-02-02T02:14:25.214Z",
+    "updatedAt": "2026-02-02T02:14:55.966Z",
+    "slides": [
+      {
+        "slideId": "933abcc4-5b66-4b58-88a5-4c345ca66f8b",
+        "title": "Navigating through the Library",
+        "order": 1,
+        "leftPane": {
+          "type": "text",
+          "data": {
+            "format": "html",
+            "content": ""
+          }
+        },
+        "rightPane": null
+      },
+      {
+        "slideId": "26e77e2d-8e60-4383-a61d-567ecc18d689",
+        "title": "Slide 2",
+        "order": 2,
+        "leftPane": null,
+        "rightPane": null
       }
     ]
   }

@@ -23,6 +23,9 @@ let tutorials = loadTutorials();
 const tutorialRoutes = require("./routes/tutorials.routes");
 app.use("/api/tutorials", tutorialRoutes);
 
+const uploadRoutes = require("./routes/uploads.routes");
+app.use("/api/uploads", uploadRoutes);
+
 // Export the app for testing
 module.exports = app;
 

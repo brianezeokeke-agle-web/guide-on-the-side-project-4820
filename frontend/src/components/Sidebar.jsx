@@ -1,7 +1,9 @@
+import { Link } from "react-router-dom";
+
 export default function Sidebar() {
   return (
     <aside style={styles.sidebar}>
-      <div style={styles.navItem}>Home</div>
+      <Link to="/" style={styles.navLink}>Home</Link>
       <div style={styles.navItem}>Users</div>
       <div style={styles.navItem}>Settings</div>
 
@@ -14,13 +16,31 @@ export default function Sidebar() {
 const styles = {
   sidebar: {
     width: "200px",
-    background: "#f4f4f4",
+    backgroundColor: "#f9fafb",
+    borderRight: "1px solid #e5e7eb",
     padding: "16px",
     display: "flex",
     flexDirection: "column",
-    gap: "12px",
+    gap: "4px",
+    fontFamily: "system-ui, -apple-system, sans-serif",
   },
   navItem: {
     cursor: "pointer",
+    padding: "8px 12px",
+    borderRadius: "6px",
+    fontSize: "14px",
+    fontWeight: "500",
+    color: "#374151",
+    transition: "background-color 0.15s ease",
+  },
+  navLink: {
+    cursor: "pointer",
+    padding: "8px 12px",
+    borderRadius: "6px",
+    fontSize: "14px",
+    fontWeight: "500",
+    color: "#374151",
+    textDecoration: "none",
+    transition: "background-color 0.15s ease",
   },
 };

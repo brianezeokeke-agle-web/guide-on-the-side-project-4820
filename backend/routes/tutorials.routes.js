@@ -9,11 +9,55 @@ const { v4: uuidv4 } = require("uuid");
 function createEmptySlide(order) {
   return {
     slideId: uuidv4(),
+    title: `Slide ${order}`,
     order,
     leftPane: null,
     rightPane: null,
   };
 }
+
+//this function merges updated slides into existing slides by slideID
+//and adds any new slides that don't exist yet
+function mergeSlides(existingSlides, updatedSlides) {
+  if (!Array.isArray(updatedSlides)) return existingSlides;
+
+  // firstly update existing slides
+  const merged = existingSlides.map((slide) => {
+    const updated = updatedSlides.find(
+      (s) => s.slideId === slide.slideId
+    );
+
+    if (!updated) return slide;
+
+    return {
+      ...slide,
+      ...updated,
+      slideId: slide.slideId, // immutable, do not change!!!
+    };
+  });
+
+  //add any new slides that don't exist in existingSlides
+  updatedSlides.forEach((updatedSlide) => {
+    const exists = existingSlides.find(
+      (s) => s.slideId === updatedSlide.slideId
+    );
+    if (!exists && updatedSlide.slideId) {
+      merged.push({
+        slideId: updatedSlide.slideId,
+        title: updatedSlide.title || "Untitled Slide",
+        order: updatedSlide.order || merged.length + 1,
+        leftPane: updatedSlide.leftPane || null,
+        rightPane: updatedSlide.rightPane || null,
+      });
+    }
+  });
+
+  // then sort by order to maintain proper sequence
+  merged.sort((a, b) => (a.order || 0) - (b.order || 0));
+
+  return merged;
+}
+
 
 const {
   loadTutorials,
@@ -88,10 +132,17 @@ router.put("/:id", (req, res) => {
     return res.status(404).json({ error: "Tutorial not found." });
   }
 
+  const existingTutorial = tutorials[index];
+
+  const mergedSlides = updatedTutorial.slides
+    ? mergeSlides(existingTutorial.slides, updatedTutorial.slides)
+    : existingTutorial.slides;
+
   // Some fields are immutable and should be preserved as such
   tutorials[index] = {
-  ...tutorials[index],
+  ...existingTutorial,
   ...updatedTutorial,
+  slides: mergedSlides,
   tutorialId: id,
   createdAt: tutorials[index].createdAt,
   updatedAt: new Date().toISOString(),

@@ -1,7 +1,0 @@
-node_modules/
-.env
-.env.local
-
-#might remove
-*.log
-.DS_Store

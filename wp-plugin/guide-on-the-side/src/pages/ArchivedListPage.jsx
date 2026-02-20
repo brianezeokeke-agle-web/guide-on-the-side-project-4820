@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
-import { listTutorials, updateTutorial } from "../services/tutorialApi";
+import { listTutorials, updateTutorial, deleteTutorial } from "../services/tutorialApi";
 
 //helper function to get relative time for last edited display
 function getRelativeTime(dateString) {
@@ -118,17 +118,33 @@ export default function ArchivedListPage() {
     }
   };
 
-  const handleDelete = (e, tutorialId) => {
+  const handleDelete = async (e, tutorialId) => {
     e.stopPropagation();
     setOpenDropdownId(null);
-    // TODO: Implement permanent delete functionality with confirmation
-    alert("Delete permanently functionality coming soon!");
+
+    const tut = tutorials.find((t) => t.tutorialId === tutorialId);
+    const title = tut?.title || 'this tutorial';
+
+    const confirmed = window.confirm(
+      `Permanently delete "${title}"?\n\nAll slides and content will be permanently lost. This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    try {
+      await deleteTutorial(tutorialId);
+      setTutorials((prev) => prev.filter((t) => t.tutorialId !== tutorialId));
+    } catch (err) {
+      console.error("Failed to delete tutorial", err);
+      alert("Failed to delete tutorial. Please try again.");
+    }
   };
 
-  const handlePreview = (e) => {
+  const handlePreview = (e, tutorialId) => {
     e.stopPropagation();
     setOpenDropdownId(null);
-    alert("Preview functionality coming soon!");
+    const config = window.gotsConfig || {};
+    const siteUrl = config.siteUrl || window.location.origin;
+    window.open(`${siteUrl}/gots/play/${tutorialId}?preview=1`, '_blank');
   };
 
   const displayedTutorials = getSortedAndFilteredTutorials();
@@ -219,7 +235,7 @@ export default function ArchivedListPage() {
                       </button>
                       <button
                         style={styles.dropdownItem}
-                        onClick={handlePreview}
+                        onClick={(e) => handlePreview(e, tut.tutorialId)}
                       >
                         Preview
                       </button>

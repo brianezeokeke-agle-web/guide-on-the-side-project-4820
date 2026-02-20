@@ -40,13 +40,23 @@ function WysiwygEditor({ value, onChange, onBlur, editorId }) {
           statusbar: false,
           resize: false,
           setup: (editor) => {
-            editor.on('change keyup paste', () => {
+            // Handler to sync content changes
+            const syncContent = () => {
               if (!isInternalChangeRef.current) {
                 const content = editor.getContent();
                 lastValueRef.current = content;
                 onChange(content);
               }
+            };
+            
+            // for change and keyup, sync immediately
+            editor.on('change keyup', syncContent);
+            
+            // for paste, use a small delay to let TinyMCE process the pasted content first
+            editor.on('paste', () => {
+              setTimeout(syncContent, 50);
             });
+            
             editor.on('blur', () => {
               onBlur && onBlur();
             });
@@ -119,8 +129,9 @@ function WysiwygEditor({ value, onChange, onBlur, editorId }) {
 //editor component for multiple choice question
 function MCQEditor({ data, onChange, onBlur, editorId }) {
   const [errors, setErrors] = useState({});
-
-  const questionData = data || {
+  
+  // Default data structure
+  const defaultData = {
     questionType: "multipleChoice",
     questionTitle: "",
     description: "",
@@ -135,6 +146,38 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
       incorrect: "Review and try again.",
     },
   };
+
+  // Use internal state initialized from props, with defaults for missing fields
+  const [questionData, setQuestionData] = useState(() => ({
+    ...defaultData,
+    ...data,
+    options: data?.options?.length ? data.options : defaultData.options,
+    feedback: { ...defaultData.feedback, ...data?.feedback },
+  }));
+
+  // Keep a ref to avoid stale closures
+  const questionDataRef = useRef(questionData);
+  questionDataRef.current = questionData;
+  
+  // Track the last data we synced from to avoid unnecessary updates
+  const lastSyncedDataRef = useRef(null);
+
+  // Sync internal state when data prop changes from parent (e.g., on initial load)
+  // Only sync if the data actually changed (compare by JSON string)
+  useEffect(() => {
+    if (data) {
+      const dataStr = JSON.stringify(data);
+      if (dataStr !== lastSyncedDataRef.current) {
+        lastSyncedDataRef.current = dataStr;
+        setQuestionData({
+          ...defaultData,
+          ...data,
+          options: data.options?.length ? data.options : defaultData.options,
+          feedback: { ...defaultData.feedback, ...data.feedback },
+        });
+      }
+    }
+  }, [data]);
 
   const validate = (newData) => {
     const newErrors = {};
@@ -152,55 +195,77 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
   };
 
   const updateField = (field, value) => {
-    const newData = { ...questionData, [field]: value };
+    const newData = { ...questionDataRef.current, [field]: value };
+    setQuestionData(newData);
     validate(newData);
     onChange(newData);
   };
 
   const updateOption = (optionId, text) => {
-    const newOptions = questionData.options.map((opt) =>
+    const newOptions = questionDataRef.current.options.map((opt) =>
       opt.id === optionId ? { ...opt, text } : opt
     );
-    const newData = { ...questionData, options: newOptions };
+    const newData = { ...questionDataRef.current, options: newOptions };
+    setQuestionData(newData);
     validate(newData);
     onChange(newData);
   };
 
   const addOption = () => {
-    const nextId = String.fromCharCode(97 + questionData.options.length); // a, b, c, d...
-    const newOptions = [...questionData.options, { id: nextId, text: "" }];
-    const newData = { ...questionData, options: newOptions };
+    const nextId = String.fromCharCode(97 + questionDataRef.current.options.length); // a, b, c, d...
+    const newOptions = [...questionDataRef.current.options, { id: nextId, text: "" }];
+    const newData = { ...questionDataRef.current, options: newOptions };
+    setQuestionData(newData);
     onChange(newData);
   };
 
   const removeOption = (optionId) => {
-    if (questionData.options.length <= 2) {
+    if (questionDataRef.current.options.length <= 2) {
       setErrors({ ...errors, options: "At least 2 options are required" });
       return;
     }
-    const newOptions = questionData.options.filter((opt) => opt.id !== optionId);
-    const newCorrectId = questionData.correctOptionId === optionId ? "" : questionData.correctOptionId;
-    const newData = { ...questionData, options: newOptions, correctOptionId: newCorrectId };
+    const newOptions = questionDataRef.current.options.filter((opt) => opt.id !== optionId);
+    const newCorrectId = questionDataRef.current.correctOptionId === optionId ? "" : questionDataRef.current.correctOptionId;
+    const newData = { ...questionDataRef.current, options: newOptions, correctOptionId: newCorrectId };
+    setQuestionData(newData);
     validate(newData);
     onChange(newData);
   };
 
   const setCorrectOption = (optionId) => {
-    const newData = { ...questionData, correctOptionId: optionId };
+    const newData = { ...questionDataRef.current, correctOptionId: optionId };
+    setQuestionData(newData);
     validate(newData);
     onChange(newData);
+    // Correct answer was just set — trigger save
+    onBlur && onBlur();
   };
 
   const updateFeedback = (type, value) => {
     const newData = {
-      ...questionData,
-      feedback: { ...questionData.feedback, [type]: value },
+      ...questionDataRef.current,
+      feedback: { ...questionDataRef.current.feedback, [type]: value },
     };
+    setQuestionData(newData);
     onChange(newData);
+  };
+
+  const isValid = !!questionData.correctOptionId;
+
+  // Only allow save (onBlur) when a correct option is selected
+  const guardedBlur = () => {
+    if (isValid) {
+      onBlur && onBlur();
+    }
   };
 
   return (
     <div style={styles.mcqContainer}>
+      {!isValid && (
+        <div style={styles.validationBanner}>
+          You must select a correct answer before this question can be saved. Use the radio buttons below to mark the correct option.
+        </div>
+      )}
       {/* question title textbox */}
       <div style={styles.mcqField}>
         <label style={styles.mcqLabel}>Question Title *</label>
@@ -209,7 +274,7 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
           style={styles.mcqInput}
           value={questionData.questionTitle || ""}
           onChange={(e) => updateField("questionTitle", e.target.value)}
-          onBlur={onBlur}
+          onBlur={guardedBlur}
           placeholder="Enter your question..."
         />
         {errors.questionTitle && (
@@ -224,7 +289,7 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
           editorId={`${editorId}-description`}
           value={questionData.description || ""}
           onChange={(content) => updateField("description", content)}
-          onBlur={onBlur}
+          onBlur={guardedBlur}
         />
       </div>
 
@@ -254,7 +319,7 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
                 style={styles.optionInput}
                 value={option.text}
                 onChange={(e) => updateOption(option.id, e.target.value)}
-                onBlur={onBlur}
+                onBlur={guardedBlur}
                 placeholder={`Option ${option.id.toUpperCase()}`}
               />
               {questionData.options.length > 2 && (
@@ -289,7 +354,7 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
             style={styles.feedbackInput}
             value={questionData.feedback?.correct || ""}
             onChange={(e) => updateFeedback("correct", e.target.value)}
-            onBlur={onBlur}
+            onBlur={guardedBlur}
             placeholder="Feedback for correct answer"
           />
         </div>
@@ -300,7 +365,7 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
             style={styles.feedbackInput}
             value={questionData.feedback?.incorrect || ""}
             onChange={(e) => updateFeedback("incorrect", e.target.value)}
-            onBlur={onBlur}
+            onBlur={guardedBlur}
             placeholder="Feedback for incorrect answer"
           />
         </div>
@@ -313,7 +378,8 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
 function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
   const [errors, setErrors] = useState({});
 
-  const questionData = data || {
+  // Default data structure
+  const defaultData = {
     questionType: "textInput",
     questionTitle: "",
     description: "",
@@ -325,6 +391,36 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
       incorrect: "That's not quite right. Please try again.",
     },
   };
+
+  // Use internal state initialized from props, with defaults for missing fields
+  const [questionData, setQuestionData] = useState(() => ({
+    ...defaultData,
+    ...data,
+    feedback: { ...defaultData.feedback, ...data?.feedback },
+  }));
+
+  // Keep a ref to avoid stale closures
+  const questionDataRef = useRef(questionData);
+  questionDataRef.current = questionData;
+  
+  // Track the last data we synced from to avoid unnecessary updates
+  const lastSyncedDataRef = useRef(null);
+
+  // Sync internal state when data prop changes from parent (e.g., on initial load)
+  // Only sync if the data actually changed (compare by JSON string)
+  useEffect(() => {
+    if (data) {
+      const dataStr = JSON.stringify(data);
+      if (dataStr !== lastSyncedDataRef.current) {
+        lastSyncedDataRef.current = dataStr;
+        setQuestionData({
+          ...defaultData,
+          ...data,
+          feedback: { ...defaultData.feedback, ...data.feedback },
+        });
+      }
+    }
+  }, [data]);
 
   const validate = (newData) => {
     const newErrors = {};
@@ -339,21 +435,38 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
   };
 
   const updateField = (field, value) => {
-    const newData = { ...questionData, [field]: value };
+    const newData = { ...questionDataRef.current, [field]: value };
+    setQuestionData(newData);
     validate(newData);
     onChange(newData);
   };
 
   const updateFeedback = (type, value) => {
     const newData = {
-      ...questionData,
-      feedback: { ...questionData.feedback, [type]: value },
+      ...questionDataRef.current,
+      feedback: { ...questionDataRef.current.feedback, [type]: value },
     };
+    setQuestionData(newData);
     onChange(newData);
+  };
+
+  const isValid = !!questionData.correctAnswer?.trim();
+
+  // Only allow save (onBlur) when a correct answer is provided
+  const guardedBlur = () => {
+    if (isValid) {
+      onBlur && onBlur();
+    }
   };
 
   return (
     <div style={styles.mcqContainer}>
+      {!isValid && (
+        <div style={styles.validationBanner}>
+          You must provide a correct answer before this question can be saved. Enter the expected answer below.
+        </div>
+      )}
+
       {/* question title */}
       <div style={styles.mcqField}>
         <label style={styles.mcqLabel}>Question Title *</label>
@@ -362,7 +475,7 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
           style={styles.mcqInput}
           value={questionData.questionTitle || ""}
           onChange={(e) => updateField("questionTitle", e.target.value)}
-          onBlur={onBlur}
+          onBlur={guardedBlur}
           placeholder="Enter your question..."
         />
         {errors.questionTitle && (
@@ -377,7 +490,7 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
           editorId={`${editorId}-description`}
           value={questionData.description || ""}
           onChange={(content) => updateField("description", content)}
-          onBlur={onBlur}
+          onBlur={guardedBlur}
         />
       </div>
 
@@ -389,7 +502,7 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
           style={styles.mcqInput}
           value={questionData.correctAnswer || ""}
           onChange={(e) => updateField("correctAnswer", e.target.value)}
-          onBlur={onBlur}
+          onBlur={guardedBlur}
           placeholder="Enter the correct answer..."
         />
         {errors.correctAnswer && (
@@ -410,7 +523,7 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
             style={styles.feedbackInput}
             value={questionData.feedback?.correct || ""}
             onChange={(e) => updateFeedback("correct", e.target.value)}
-            onBlur={onBlur}
+            onBlur={guardedBlur}
             placeholder="Feedback for correct answer"
           />
         </div>
@@ -421,7 +534,7 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
             style={styles.feedbackInput}
             value={questionData.feedback?.incorrect || ""}
             onChange={(e) => updateFeedback("incorrect", e.target.value)}
-            onBlur={onBlur}
+            onBlur={guardedBlur}
             placeholder="Feedback for incorrect answer"
           />
         </div>
@@ -466,8 +579,8 @@ function MediaUploadEditor({ data, onChange, onBlur }) {
           altText: selected.altText || mediaData.altText || "",
         };
         
-        onChange(newData);
-        onBlur(); // Persist immediately after selection
+        // Pass true to persist immediately after selection
+        onChange(newData, true);
       }
     } catch (err) {
       setError(err.message || "Failed to select media");
@@ -485,8 +598,8 @@ function MediaUploadEditor({ data, onChange, onBlur }) {
       attachmentId: null,
       altText: "",
     };
-    onChange(newData);
-    onBlur();
+    // Pass true to persist immediately after removal
+    onChange(newData, true);
   };
 
   const updateAltText = (altText) => {
@@ -592,6 +705,9 @@ export default function TutorialEditorPage() {
   const [saveStatus, setSaveStatus] = useState("");
   const [draggedSlideId, setDraggedSlideId] = useState(null);
   const [dragOverSlideId, setDragOverSlideId] = useState(null);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editingTitleValue, setEditingTitleValue] = useState("");
+  const titleInputRef = useRef(null);
 
   // fetch tutorial on mount
   useEffect(() => {
@@ -599,7 +715,9 @@ export default function TutorialEditorPage() {
       try {
         setLoading(true);
         const data = await getTutorial(id);
+        // Update both state AND ref
         setTutorial(data);
+        tutorialRef.current = data; // IMPORTANT: Sync ref on initial load
         // set first slide as active by default
         if (data.slides && data.slides.length > 0) {
           setActiveSlideId(data.slides[0].slideId);
@@ -616,40 +734,91 @@ export default function TutorialEditorPage() {
   // get the active slide object
   const activeSlide = tutorial?.slides?.find((s) => s.slideId === activeSlideId);
 
+  // Use a ref to always have access to the latest tutorial state
+  const tutorialRef = useRef(tutorial);
+  
+  // Helper to update tutorial state AND ref synchronously
+  // Includes safety checks to prevent data corruption
+  const updateTutorialState = useCallback((updater) => {
+    setTutorial((prev) => {
+      const newState = typeof updater === 'function' ? updater(prev) : updater;
+      
+      // Safety check: prevent accidentally wiping out slides
+      if (prev?.slides?.length > 0 && (!newState?.slides || newState.slides.length === 0)) {
+        return prev; // Keep the old state
+      }
+      
+      tutorialRef.current = newState; // Update ref synchronously
+      return newState;
+    });
+  }, []);
+
   // persist slide changes to backend, it accepts the slide data directly to avoid a stale state
+  // Does NOT update local state from API response to avoid overwriting in-progress edits
   const persistSlideUpdate = async (slideData) => {
-    if (!slideData || !slideData.slideId) return;
+    if (!slideData || !slideData.slideId) {
+      return;
+    }
+
+    const payload = {
+      slides: [{
+        slideId: slideData.slideId,
+        title: slideData.title,
+        order: slideData.order,
+        leftPane: slideData.leftPane,
+        rightPane: slideData.rightPane,
+      }],
+    };
 
     setSaveStatus("Saving...");
     try {
-      const updatedTutorial = await updateTutorial(id, {
-        slides: [{
-          slideId: slideData.slideId,
-          title: slideData.title,
-          order: slideData.order,
-          leftPane: slideData.leftPane,
-          rightPane: slideData.rightPane,
-        }],
-      });
-      setTutorial(updatedTutorial);
+      await updateTutorial(id, payload);
       setSaveStatus("Saved");
       setTimeout(() => setSaveStatus(""), 2000);
     } catch (err) {
+      console.error("Error saving slide:", err);
       setSaveStatus("Error saving");
     }
   };
 
   // helper to get current slide and persist, used by the blur handlers
-  const persistCurrentSlide = (slideId) => {
-    const currentSlide = tutorial?.slides?.find((s) => s.slideId === slideId);
+  // Uses tutorialRef to avoid stale closure issues
+  const persistCurrentSlide = useCallback((slideId) => {
+    const currentSlide = tutorialRef.current?.slides?.find((s) => s.slideId === slideId);
     if (currentSlide) {
       persistSlideUpdate(currentSlide);
+    }
+  }, [id]);
+
+  // handle tutorial title edit and persist
+  const handleTutorialTitleBlur = async () => {
+    const newTitle = editingTitleValue.trim();
+    setIsEditingTitle(false);
+    
+    if (!newTitle || newTitle === tutorial.title) {
+      // No change or empty, revert
+      setEditingTitleValue(tutorial.title || "");
+      return;
+    }
+    
+    // Update local state
+    updateTutorialState((prev) => ({ ...prev, title: newTitle }));
+    
+    // Persist to backend
+    setSaveStatus("Saving...");
+    try {
+      await updateTutorial(id, { title: newTitle });
+      setSaveStatus("Saved");
+      setTimeout(() => setSaveStatus(""), 2000);
+    } catch (err) {
+      console.error("Error saving title:", err);
+      setSaveStatus("Error saving");
     }
   };
 
   // handle slide title change, local update only
   const handleTitleChange = (slideId, newTitle) => {
-    setTutorial((prev) => ({
+    updateTutorialState((prev) => ({
       ...prev,
       slides: prev.slides.map((s) =>
         s.slideId === slideId ? { ...s, title: newTitle } : s
@@ -741,7 +910,7 @@ export default function TutorialEditorPage() {
     const updatedSlide = { ...currentSlide, [paneKey]: paneData };
     
     // update the local state
-    setTutorial((prev) => ({
+    updateTutorialState((prev) => ({
       ...prev,
       slides: prev.slides.map((s) =>
         s.slideId === slideId ? updatedSlide : s
@@ -754,15 +923,19 @@ export default function TutorialEditorPage() {
 
   // handle pane content edit, should be local update only
   const handlePaneContentChange = (slideId, paneKey, pane, updates) => {
-    const updatedPane = {
-      ...pane,
-      data: { ...pane.data, ...updates },
-    };
-    setTutorial((prev) => ({
+    updateTutorialState((prev) => ({
       ...prev,
-      slides: prev.slides.map((s) =>
-        s.slideId === slideId ? { ...s, [paneKey]: updatedPane } : s
-      ),
+      slides: prev.slides.map((s) => {
+        if (s.slideId !== slideId) return s;
+        const currentPane = s[paneKey] || pane;
+        return {
+          ...s,
+          [paneKey]: {
+            ...currentPane,
+            data: { ...currentPane.data, ...updates },
+          },
+        };
+      }),
     }));
   };
 
@@ -829,7 +1002,7 @@ export default function TutorialEditorPage() {
     }));
 
     // update local state immediately for responsiveness
-    setTutorial((prev) => ({
+    updateTutorialState((prev) => ({
       ...prev,
       slides: reorderedSlides,
     }));
@@ -838,10 +1011,9 @@ export default function TutorialEditorPage() {
     // persist all slides with updated order to backend
     setSaveStatus("Saving...");
     try {
-      const updatedTutorial = await updateTutorial(id, {
+      await updateTutorial(id, {
         slides: reorderedSlides,
       });
-      setTutorial(updatedTutorial);
       setSaveStatus("Saved");
       setTimeout(() => setSaveStatus(""), 2000);
     } catch (err) {
@@ -878,7 +1050,7 @@ export default function TutorialEditorPage() {
     };
 
     // add to local state first
-    setTutorial((prev) => ({
+    updateTutorialState((prev) => ({
       ...prev,
       slides: [...(prev.slides || []), newSlide],
     }));
@@ -889,19 +1061,67 @@ export default function TutorialEditorPage() {
     // persist data to the backend
     setSaveStatus("Saving...");
     try {
-      const updatedTutorial = await updateTutorial(id, {
+      await updateTutorial(id, {
         slides: [newSlide],
       });
-      setTutorial(updatedTutorial);
-      // ensuring that the new slide stays active
-      const savedSlide = updatedTutorial.slides?.find((s) => s.slideId === newSlide.slideId);
-      if (savedSlide) {
-        setActiveSlideId(savedSlide.slideId);
-      }
       setSaveStatus("Saved");
       setTimeout(() => setSaveStatus(""), 2000);
     } catch (err) {
       setSaveStatus("Error saving");
+    }
+  };
+
+  // delete a slide
+  const handleDeleteSlide = async (slideId) => {
+    if (!tutorial || !tutorial.slides) return;
+
+    const slide = tutorial.slides.find((s) => s.slideId === slideId);
+    if (!slide) return;
+
+    // Only allow deletion if there's more than one slide
+    if (tutorial.slides.length <= 1) {
+      alert("Cannot delete the only slide. A tutorial must have at least one slide.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete "${slide.title || 'Untitled Slide'}"?\n\nThis action cannot be undone. All content in this slide will be permanently lost.`
+    );
+    if (!confirmed) return;
+
+    // Find the sorted slides and determine next slide to jump to
+    const sortedSlides = [...tutorial.slides].sort((a, b) => a.order - b.order);
+    const deleteIndex = sortedSlides.findIndex((s) => s.slideId === slideId);
+    const remaining = sortedSlides.filter((s) => s.slideId !== slideId);
+
+    // Reorder remaining slides (1-based)
+    const reorderedSlides = remaining.map((s, idx) => ({
+      ...s,
+      order: idx + 1,
+    }));
+
+    // Determine next active slide
+    const nextIndex = Math.min(deleteIndex, reorderedSlides.length - 1);
+    const nextSlide = reorderedSlides[nextIndex];
+
+    // Update local state immediately
+    updateTutorialState((prev) => ({
+      ...prev,
+      slides: reorderedSlides,
+    }));
+    setActiveSlideId(nextSlide?.slideId || null);
+
+    // Persist to backend
+    setSaveStatus("Deleting...");
+    try {
+      await updateTutorial(id, {
+        deleteSlideIds: [slideId],
+      });
+      setSaveStatus("Deleted");
+      setTimeout(() => setSaveStatus(""), 2000);
+    } catch (err) {
+      console.error("Error deleting slide:", err);
+      setSaveStatus("Error deleting");
     }
   };
 
@@ -958,12 +1178,13 @@ export default function TutorialEditorPage() {
             editorId={`gots-mcq-${slideId}-${paneKey}`}
             data={pane.data}
             onChange={(questionData) => {
-              const updatedPane = { ...pane, data: questionData };
-              setTutorial((prev) => ({
+              updateTutorialState((prev) => ({
                 ...prev,
-                slides: prev.slides.map((s) =>
-                  s.slideId === slideId ? { ...s, [paneKey]: updatedPane } : s
-                ),
+                slides: prev.slides.map((s) => {
+                  if (s.slideId !== slideId) return s;
+                  const currentPane = s[paneKey];
+                  return { ...s, [paneKey]: { ...currentPane, data: questionData } };
+                }),
               }));
             }}
             onBlur={() => handlePaneContentBlur(slideId)}
@@ -976,12 +1197,13 @@ export default function TutorialEditorPage() {
             editorId={`gots-textq-${slideId}-${paneKey}`}
             data={pane.data}
             onChange={(questionData) => {
-              const updatedPane = { ...pane, data: questionData };
-              setTutorial((prev) => ({
+              updateTutorialState((prev) => ({
                 ...prev,
-                slides: prev.slides.map((s) =>
-                  s.slideId === slideId ? { ...s, [paneKey]: updatedPane } : s
-                ),
+                slides: prev.slides.map((s) => {
+                  if (s.slideId !== slideId) return s;
+                  const currentPane = s[paneKey];
+                  return { ...s, [paneKey]: { ...currentPane, data: questionData } };
+                }),
               }));
             }}
             onBlur={() => handlePaneContentBlur(slideId)}
@@ -992,7 +1214,7 @@ export default function TutorialEditorPage() {
           <div style={styles.embedInputs}>
             <input
               type="text"
-              placeholder="Embed URL"
+              placeholder="Embed URL (e.g., YouTube, Vimeo, or any embeddable link)"
               style={styles.input}
               value={pane.data?.url || ""}
               onChange={(e) =>
@@ -1000,16 +1222,10 @@ export default function TutorialEditorPage() {
               }
               onBlur={() => handlePaneContentBlur(slideId)}
             />
-            <input
-              type="text"
-              placeholder="Fallback text (optional)"
-              style={styles.input}
-              value={pane.data?.fallbackText || ""}
-              onChange={(e) =>
-                handlePaneContentChange(slideId, paneKey, pane, { fallbackText: e.target.value })
-              }
-              onBlur={() => handlePaneContentBlur(slideId)}
-            />
+            <p style={styles.embedHint}>
+              Tip: For YouTube, you can paste the regular watch URL (e.g., youtube.com/watch?v=...) 
+              and it will be automatically converted to an embed URL.
+            </p>
           </div>
         )}
 
@@ -1017,14 +1233,28 @@ export default function TutorialEditorPage() {
           <MediaUploadEditor
             key={`${slideId}-${paneKey}`}
             data={pane.data}
-            onChange={(mediaData) => {
-              const updatedPane = { ...pane, data: mediaData };
-              setTutorial((prev) => ({
-                ...prev,
-                slides: prev.slides.map((s) =>
-                  s.slideId === slideId ? { ...s, [paneKey]: updatedPane } : s
-                ),
-              }));
+            onChange={(mediaData, shouldPersist = false) => {
+              // Update local state and ref synchronously
+              updateTutorialState((prev) => {
+                const newTutorial = {
+                  ...prev,
+                  slides: prev.slides.map((s) => {
+                    if (s.slideId !== slideId) return s;
+                    const currentPane = s[paneKey];
+                    return { ...s, [paneKey]: { ...currentPane, data: mediaData } };
+                  }),
+                };
+                
+                // If shouldPersist, persist immediately with the new data
+                if (shouldPersist) {
+                  const updatedSlide = newTutorial.slides.find((s) => s.slideId === slideId);
+                  if (updatedSlide) {
+                    persistSlideUpdate(updatedSlide);
+                  }
+                }
+                
+                return newTutorial;
+              });
             }}
             onBlur={() => handlePaneContentBlur(slideId)}
           />
@@ -1066,8 +1296,8 @@ export default function TutorialEditorPage() {
         <div style={styles.slidesSection}>
           <h3 style={styles.sidebarTitle}>Slides</h3>
           <ul style={styles.slideList}>
-            {tutorial.slides
-              ?.sort((a, b) => a.order - b.order)
+            {[...(tutorial.slides || [])]
+              .sort((a, b) => a.order - b.order)
               .map((slide) => (
                 <li
                   key={slide.slideId}
@@ -1105,7 +1335,36 @@ export default function TutorialEditorPage() {
       <main style={styles.main}>
         <div style={styles.header}>
           <div style={styles.headerLeft}>
-            <h1 style={styles.pageTitle}>{tutorial.title || "Untitled Tutorial"}</h1>
+            {isEditingTitle ? (
+              <input
+                ref={titleInputRef}
+                type="text"
+                value={editingTitleValue}
+                onChange={(e) => setEditingTitleValue(e.target.value)}
+                onBlur={handleTutorialTitleBlur}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleTutorialTitleBlur();
+                  } else if (e.key === 'Escape') {
+                    setIsEditingTitle(false);
+                    setEditingTitleValue(tutorial.title || "");
+                  }
+                }}
+                style={styles.pageTitleInput}
+                autoFocus
+              />
+            ) : (
+              <h1
+                style={styles.pageTitleClickable}
+                onClick={() => {
+                  setEditingTitleValue(tutorial.title || "");
+                  setIsEditingTitle(true);
+                }}
+                title="Click to edit tutorial title"
+              >
+                {tutorial.title || "Untitled Tutorial"}
+              </h1>
+            )}
             <span style={styles.statusBadge}>
               {tutorial.status || "Draft"}
             </span>
@@ -1155,8 +1414,29 @@ export default function TutorialEditorPage() {
             {/* done Editing Button */}
             <div style={styles.doneButtonContainer}>
               <button
+                style={styles.deleteSlideButton}
+                onClick={() => handleDeleteSlide(activeSlide.slideId)}
+                title="Permanently delete this slide"
+              >
+                Delete Slide
+              </button>
+              <button
                 style={styles.doneButton}
-                onClick={() => navigate(`/tutorials?highlight=${id}`)}
+                onClick={async () => {
+                  // Save the current slide before navigating to ensure no data is lost
+                  if (activeSlideId) {
+                    const currentSlide = tutorialRef.current?.slides?.find((s) => s.slideId === activeSlideId);
+                    if (currentSlide) {
+                      setSaveStatus("Saving...");
+                      try {
+                        await persistSlideUpdate(currentSlide);
+                      } catch (err) {
+                        console.error("Error saving before navigation:", err);
+                      }
+                    }
+                  }
+                  navigate(`/tutorials?highlight=${id}`);
+                }}
               >
                 Done Editing
               </button>
@@ -1309,6 +1589,29 @@ const styles = {
     fontWeight: "600",
     color: "#111827",
   },
+  pageTitleClickable: {
+    margin: 0,
+    fontSize: "24px",
+    fontWeight: "600",
+    color: "#111827",
+    cursor: "pointer",
+    padding: "4px 8px",
+    borderRadius: "6px",
+    border: "2px solid transparent",
+    transition: "border-color 0.15s ease, background-color 0.15s ease",
+  },
+  pageTitleInput: {
+    margin: 0,
+    fontSize: "24px",
+    fontWeight: "600",
+    color: "#111827",
+    padding: "4px 8px",
+    borderRadius: "6px",
+    border: "2px solid #7B2D26",
+    outline: "none",
+    backgroundColor: "#fff",
+    minWidth: "300px",
+  },
   statusBadge: {
     display: "inline-block",
     padding: "4px 10px",
@@ -1374,10 +1677,22 @@ const styles = {
   },
   doneButtonContainer: {
     display: "flex",
-    justifyContent: "flex-end",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginTop: "32px",
     paddingTop: "24px",
     borderTop: "1px solid #e5e7eb",
+  },
+  deleteSlideButton: {
+    padding: "12px 24px",
+    fontSize: "14px",
+    fontWeight: "500",
+    cursor: "pointer",
+    backgroundColor: "#fff",
+    color: "#dc2626",
+    border: "1px solid #dc2626",
+    borderRadius: "6px",
+    transition: "background-color 0.15s ease",
   },
   doneButton: {
     padding: "12px 24px",
@@ -1440,6 +1755,13 @@ const styles = {
     flexDirection: "column",
     gap: "8px",
   },
+  embedHint: {
+    fontSize: "12px",
+    color: "#6b7280",
+    fontStyle: "italic",
+    margin: "4px 0 0 0",
+    lineHeight: "1.4",
+  },
   input: {
     width: "100%",
     padding: "10px 12px",
@@ -1489,6 +1811,17 @@ const styles = {
     overflowY: "auto",
     outline: "none",
     lineHeight: "1.5",
+  },
+  validationBanner: {
+    padding: "12px 16px",
+    backgroundColor: "#fef2f2",
+    border: "1px solid #fca5a5",
+    borderRadius: "6px",
+    color: "#991b1b",
+    fontSize: "13px",
+    fontWeight: "500",
+    lineHeight: "1.5",
+    marginBottom: "8px",
   },
   // MCQ Editor styles
   mcqContainer: {

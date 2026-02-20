@@ -265,6 +265,11 @@ function gots_sanitize_tutorial_data($data, $is_create = false) {
         $sanitized['slides'] = gots_sanitize_slides($data['slides']);
     }
     
+    // deleteSlideIds - array of slide IDs to remove
+    if (isset($data['deleteSlideIds']) && is_array($data['deleteSlideIds'])) {
+        $sanitized['deleteSlideIds'] = array_map('sanitize_text_field', $data['deleteSlideIds']);
+    }
+    
     return $sanitized;
 }
 
@@ -357,6 +362,26 @@ function gots_sanitize_pane($pane) {
 }
 
 /**
+ * Strip browser-injected junk HTML (Google Translate spans, etc.) from content
+ * These attributes and elements break JSON storage and serve no purpose in saved content
+ *
+ * @param string $html Raw HTML string
+ * @return string Cleaned HTML
+ */
+function gots_strip_junk_html($html) {
+    if (!is_string($html)) {
+        return $html;
+    }
+    
+    // remove Google Translate injected spans entirely (they have data-wiz-* attributes)
+    $html = preg_replace('/<span[^>]*data-wiz-[^>]*>.*?<\/span>/is', '', $html);
+    // also remove spans with notranslate class injected by browser
+    $html = preg_replace('/<span[^>]*class=["\'][^"\'>]*notranslate[^"\'>]*["\'][^>]*>.*?<\/span>/is', '', $html);
+    
+    return $html;
+}
+
+/**
  * deep sanitize an array while preserving its structure
  *
  * @param array $data Array to sanitize
@@ -365,6 +390,8 @@ function gots_sanitize_pane($pane) {
 function gots_deep_sanitize_array($data) {
     if (!is_array($data)) {
         if (is_string($data)) {
+            // Strip browser-injected junk before allowing HTML content
+            $data = gots_strip_junk_html($data);
             // allow HTML content for rich text by using wp_kses_post
             return wp_kses_post($data);
         }
@@ -373,12 +400,15 @@ function gots_deep_sanitize_array($data) {
     
     $clean = array();
     foreach ($data as $key => $value) {
-        $clean_key = sanitize_key($key);
+        // Preserve the original key - don't use sanitize_key as it lowercases
+        // Just ensure it's a valid string key
+        $clean_key = is_string($key) ? $key : (string) $key;
         
         if (is_array($value)) {
             $clean[$clean_key] = gots_deep_sanitize_array($value);
         } elseif (is_string($value)) {
-            // allow HTML content for text panes
+            // Strip browser-injected junk then allow HTML content for text panes
+            $value = gots_strip_junk_html($value);
             $clean[$clean_key] = wp_kses_post($value);
         } elseif (is_bool($value)) {
             $clean[$clean_key] = $value;

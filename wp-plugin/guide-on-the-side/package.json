@@ -6,7 +6,9 @@
   "description": "Interactive tutorial creator for WordPress/Pressbooks",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run build:admin && npm run build:student",
+    "build:admin": "VITE_BUILD_MODE=admin vite build",
+    "build:student": "VITE_BUILD_MODE=student vite build",
     "preview": "vite preview",
     "lint": "eslint src/"
   },

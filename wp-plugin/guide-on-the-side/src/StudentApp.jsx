@@ -232,7 +232,6 @@ export default function StudentApp() {
   if (completed) {
     return (
       <div style={styles.completionContainer}>
-        <div style={styles.completionIcon}>🎉</div>
         <h1 style={styles.completionTitle}>Tutorial Complete!</h1>
         <p style={styles.completionMessage}>
           Congratulations! You've completed "{tutorial.title}".

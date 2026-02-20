@@ -3,34 +3,51 @@ import react from '@vitejs/plugin-react-swc'
 import { resolve } from 'path'
 
 // https://vite.dev/config/
-export default defineConfig({
-  plugins: [react()],
+// Build mode is determined by VITE_BUILD_MODE env var: 'admin' or 'student'
+export default defineConfig(({ mode }) => {
+  const buildMode = process.env.VITE_BUILD_MODE || 'admin';
   
-  // Build configuration for WordPress plugin
-  build: {
-    outDir: 'build',
-    emptyOutDir: true,
-    manifest: true,
-    rollupOptions: {
-      input: {
-        main: resolve(__dirname, 'index.html'),
-      },
-      output: {
-        // Ensure consistent naming for WordPress enqueue
-        entryFileNames: 'assets/[name]-[hash].js',
-        chunkFileNames: 'assets/[name]-[hash].js',
-        assetFileNames: 'assets/[name]-[hash].[ext]',
+  const configs = {
+    admin: {
+      outDir: 'build',
+      emptyOutDir: true,
+      manifest: true,
+      rollupOptions: {
+        input: {
+          main: resolve(__dirname, 'index.html'),
+        },
+        output: {
+          entryFileNames: 'assets/[name]-[hash].js',
+          chunkFileNames: 'assets/[name]-[hash].js',
+          assetFileNames: 'assets/[name]-[hash].[ext]',
+        },
       },
     },
-  },
+    student: {
+      outDir: 'build-student',
+      emptyOutDir: true,
+      manifest: true,
+      rollupOptions: {
+        input: {
+          student: resolve(__dirname, 'student.html'),
+        },
+        output: {
+          entryFileNames: 'assets/[name]-[hash].js',
+          chunkFileNames: 'assets/[name]-[hash].js',
+          assetFileNames: 'assets/[name]-[hash].[ext]',
+        },
+      },
+    },
+  };
   
-  // Base path - empty for WordPress plugin since we handle paths in PHP
-  base: './',
-  
-  // Development server configuration (optional, for local dev)
-  server: {
-    port: 5173,
-    strictPort: true,
-    cors: true,
-  },
+  return {
+    plugins: [react()],
+    build: configs[buildMode],
+    base: './',
+    server: {
+      port: 5173,
+      strictPort: true,
+      cors: true,
+    },
+  };
 })

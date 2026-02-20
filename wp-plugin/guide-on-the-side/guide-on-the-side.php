@@ -28,6 +28,7 @@ require_once GOTS_PLUGIN_DIR . 'includes/util.php';
 require_once GOTS_PLUGIN_DIR . 'includes/post-types.php';
 require_once GOTS_PLUGIN_DIR . 'includes/rest-routes.php';
 require_once GOTS_PLUGIN_DIR . 'includes/enqueue.php';
+require_once GOTS_PLUGIN_DIR . 'includes/public-playback.php';
 
 /**
  * the plugin activation hook
@@ -35,6 +36,9 @@ require_once GOTS_PLUGIN_DIR . 'includes/enqueue.php';
 function gots_activate() {
     // register post types on activation
     gots_register_post_types();
+    
+    // register public playback rewrite rules
+    gots_register_public_rewrite_rules();
     
     // flush rewrite rules to ensure CPT permalinks work
     flush_rewrite_rules();

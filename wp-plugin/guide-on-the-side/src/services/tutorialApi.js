@@ -18,8 +18,7 @@ function getConfig() {
     };
   }
   
-  // Fallback for development outside WordPress (should not happen in production)
-  console.warn('gotsConfig not found - running in development mode');
+  // Fallback for development outside WordPress
   return {
     baseUrl: '/wp-json/gots/v1',
     nonce: null,
@@ -179,12 +178,34 @@ export async function updateTutorialSlides(id, slides) {
   return updateTutorial(id, { slides });
 }
 
+/**
+ * Delete a tutorial permanently
+ * @param {string|number} id - Tutorial ID
+ * @returns {Promise<Object>} Deletion result
+ */
+export async function deleteTutorial(id) {
+  const response = await apiRequest(`/tutorials/${id}`, {
+    method: 'DELETE',
+  });
+  
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error('Tutorial not found');
+    }
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || 'Failed to delete tutorial');
+  }
+  
+  return response.json();
+}
+
 // Default export for convenience
 export default {
   listTutorials,
   getTutorial,
   createTutorial,
   updateTutorial,
+  deleteTutorial,
   archiveTutorial,
   unarchiveTutorial,
   publishTutorial,

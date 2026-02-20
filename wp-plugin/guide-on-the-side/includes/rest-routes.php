@@ -58,6 +58,34 @@ function gots_register_rest_routes() {
             ),
         ),
     ));
+    
+    // DELETE /tutorials/{id} - delete a tutorial
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)', array(
+        'methods'             => WP_REST_Server::DELETABLE,
+        'callback'            => 'gots_rest_delete_tutorial',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+        'args'                => array(
+            'id' => array(
+                'validate_callback' => function($param) {
+                    return is_numeric($param);
+                },
+            ),
+        ),
+    ));
+
+    // GET /tutorials/{id}/public - get a tutorial for public playback (no authentication needed)
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/public', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_get_tutorial_public',
+        'permission_callback' => 'gots_rest_permissions_check_public',
+        'args'                => array(
+            'id' => array(
+                'validate_callback' => function($param) {
+                    return is_numeric($param);
+                },
+            ),
+        ),
+    ));
 }
 
 /**
@@ -84,6 +112,17 @@ function gots_rest_permissions_check_read($request) {
         );
     }
     
+    return true;
+}
+
+/**
+ * permission check for public read operations (student playback)
+ * always returns true - visibility is enforced in the callback
+ *
+ * @param WP_REST_Request $request Request object
+ * @return bool
+ */
+function gots_rest_permissions_check_public($request) {
     return true;
 }
 
@@ -197,6 +236,55 @@ function gots_rest_get_tutorial($request) {
 }
 
 /**
+ * get a single tutorial for public playback (student view)
+ * only returns published, non-archived tutorials
+ *
+ * @param WP_REST_Request $request Request object
+ * @return WP_REST_Response|WP_Error
+ */
+function gots_rest_get_tutorial_public($request) {
+    $id = (int) $request->get_param('id');
+    
+    $post = get_post($id);
+    
+    // check if the post exists and is the correct type
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error(
+            'tutorial_not_found',
+            __('Tutorial not found.', 'guide-on-the-side'),
+            array('status' => 404) //throw an error
+        );
+    }
+    
+    // check if this is a preview request from a logged-in admin
+    $is_preview = $request->get_param('preview') === '1';
+    $is_admin_user = is_user_logged_in() && current_user_can('edit_posts');
+    
+    if (!($is_preview && $is_admin_user)) {
+        // not an admin preview - enforce publish/archive checks
+        if ($post->post_status !== 'publish') {
+            return new WP_Error(
+                'tutorial_not_available',
+                __('This tutorial is not available at the moment.', 'guide-on-the-side'),
+                array('status' => 403)
+            );
+        }
+        
+        $archived = get_post_meta($id, '_gots_archived', true);
+        if ($archived) {
+            return new WP_Error(
+                'tutorial_not_available',
+                __('This tutorial is currently unavailable.', 'guide-on-the-side'),
+                array('status' => 403)
+            );
+        }
+    }
+    
+    // return the tutorial data for student playback
+    return rest_ensure_response(gots_format_tutorial_response($post));
+}
+
+/**
  * create a new tutorial
  *
  * @param WP_REST_Request $request request object
@@ -242,7 +330,8 @@ function gots_rest_create_tutorial($request) {
         gots_create_empty_slide(1),
         gots_create_empty_slide(2),
     );
-    update_post_meta($post_id, '_gots_slides', wp_json_encode($slides));
+    $slides_json = wp_json_encode($slides);
+    update_post_meta($post_id, '_gots_slides', $slides_json);
     
     // get the created post and return the formatted response
     $post = get_post($post_id);
@@ -329,6 +418,54 @@ function gots_rest_update_tutorial($request) {
         update_post_meta($id, '_gots_archived', $sanitized['archived'] ? 1 : 0);
     }
     
+    // handle slide deletion when needed
+    if (isset($sanitized['deleteSlideIds']) && is_array($sanitized['deleteSlideIds'])) {
+        $existing_slides_json = get_post_meta($id, '_gots_slides', true);
+        $existing_slides = array();
+        
+        if (!empty($existing_slides_json)) {
+            $decoded = json_decode($existing_slides_json, true);
+            if (is_array($decoded)) {
+                $existing_slides = $decoded;
+            }
+        }
+        
+        $delete_ids = $sanitized['deleteSlideIds'];
+        
+        // filter out the slides to delete
+        $remaining_slides = array_values(array_filter($existing_slides, function($slide) use ($delete_ids) {
+            return !in_array($slide['slideId'], $delete_ids, true);
+        }));
+        
+        // reorder remaining slides
+        foreach ($remaining_slides as $idx => &$slide) {
+            $slide['order'] = $idx + 1;
+        }
+        unset($slide);
+        
+        // save using a direct DB write
+        $save_json = wp_json_encode($remaining_slides);
+        global $wpdb;
+        $existing_meta_id = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT meta_id FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key = '_gots_slides' LIMIT 1",
+                $id
+            )
+        );
+        if ($existing_meta_id) {
+            $wpdb->update(
+                $wpdb->postmeta,
+                array('meta_value' => $save_json),
+                array('meta_id' => $existing_meta_id),
+                array('%s'),
+                array('%d')
+            );
+        }
+        wp_cache_delete($id, 'post_meta');
+        clean_post_cache($id);
+        
+    }
+    
     // handle slides merge if provided by author
     if (isset($sanitized['slides'])) {
         // get the existing slides
@@ -342,15 +479,98 @@ function gots_rest_update_tutorial($request) {
             }
         }
         
-        // merge slides using THE in house algorithm ;)
+        // merge slides using the merge algorithm
         $merged_slides = gots_merge_slides($existing_slides, $sanitized['slides']);
         
-        // save the merged slides
-        update_post_meta($id, '_gots_slides', wp_json_encode($merged_slides));
+        // safety check: don't save empty slides if we had slides before
+        if (count($existing_slides) > 0 && count($merged_slides) === 0) {
+            // don't save - something went wrong
+        } else {
+            // save the merged slides
+            $save_json = wp_json_encode($merged_slides);
+            
+            // use direct DB write to bypass WordPress meta serialization
+            // which can corrupt JSON strings containing HTML with escaped quotes
+            global $wpdb;
+            $existing_meta_id = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT meta_id FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key = '_gots_slides' LIMIT 1",
+                    $id
+                )
+            );
+            
+            if ($existing_meta_id) {
+                $wpdb->update(
+                    $wpdb->postmeta,
+                    array('meta_value' => $save_json),
+                    array('meta_id' => $existing_meta_id),
+                    array('%s'),
+                    array('%d')
+                );
+            } else {
+                $wpdb->insert(
+                    $wpdb->postmeta,
+                    array('post_id' => $id, 'meta_key' => '_gots_slides', 'meta_value' => $save_json),
+                    array('%d', '%s', '%s')
+                );
+            }
+            
+            // clear all caches after direct DB write
+            wp_cache_delete($id, 'post_meta');
+            clean_post_cache($id);
+        }
     }
+    
+    // Very Important: Clear the post meta cache to ensure we read fresh data
+    // WordPress caches meta values and sometimes returns stale data
+    wp_cache_delete($id, 'post_meta');
+    clean_post_cache($id);
     
     // get the updated post and return the formatted response
     $updated_post = get_post($id);
     
     return rest_ensure_response(gots_format_tutorial_response($updated_post));
+}
+
+/**
+ * delete a tutorial permanently
+ *
+ * @param WP_REST_Request $request Request object
+ * @return WP_REST_Response|WP_Error
+ */
+function gots_rest_delete_tutorial($request) {
+    $id = (int) $request->get_param('id');
+    
+    // get the existing post
+    $post = get_post($id);
+    
+    // check if post exists and is the correct type
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error(
+            'tutorial_not_found',
+            __('Tutorial not found.', 'guide-on-the-side'),
+            array('status' => 404)
+        );
+    }
+    
+    // delete all associated meta
+    delete_post_meta($id, '_gots_description');
+    delete_post_meta($id, '_gots_archived');
+    delete_post_meta($id, '_gots_slides');
+    
+    // permanently delete the post (bypass trash)
+    $result = wp_delete_post($id, true);
+    
+    if (!$result) {
+        return new WP_Error(
+            'delete_failed',
+            __('Failed to delete tutorial.', 'guide-on-the-side'),
+            array('status' => 500)
+        );
+    }
+    
+    return rest_ensure_response(array(
+        'deleted' => true,
+        'tutorialId' => (string) $id,
+    ));
 }

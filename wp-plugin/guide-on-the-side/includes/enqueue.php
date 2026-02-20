@@ -100,6 +100,7 @@ function gots_enqueue_admin_scripts($hook) {
         'nonce'    => wp_create_nonce('wp_rest'),
         'adminUrl' => admin_url(),
         'pluginUrl' => GOTS_PLUGIN_URL,
+        'siteUrl'  => home_url(),
     );
     
     // if script is enqueued, localize it

@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
-import { listTutorials, updateTutorial } from "../services/tutorialApi";
+import ShareModal from "../components/ShareModal";
+import { listTutorials, updateTutorial, deleteTutorial } from "../services/tutorialApi";
 
 //helper function to get relative time for last edited display
 function getRelativeTime(dateString) {
@@ -28,6 +29,7 @@ export default function PublishedListPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState("newest");
   const [openDropdownId, setOpenDropdownId] = useState(null);
+  const [shareModal, setShareModal] = useState({ isOpen: false, tutorialId: null, tutorialTitle: '' });
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
 
@@ -60,7 +62,8 @@ export default function PublishedListPage() {
   }
 
   async function archiveTutorial(tutorialId) {
-    await updateTutorial(tutorialId, { archived: true });
+    // unpublish and archive in one call
+    await updateTutorial(tutorialId, { status: 'draft', archived: true });
   }
 
   const getSortedAndFilteredTutorials = () => {
@@ -118,17 +121,59 @@ export default function PublishedListPage() {
     }
   };
 
-  const handleUnpublish = (e, tutorialId) => {
+  const handleUnpublish = async (e, tutorialId) => {
     e.stopPropagation();
     setOpenDropdownId(null);
-    // TODO: Implement unpublish functionality
-    alert("Unpublish functionality coming soon!");
+    
+    try {
+      // Update status to draft (unpublish)
+      await updateTutorial(tutorialId, { status: "draft" });
+      
+      // Remove from local state since it's no longer published
+      setTutorials((prev) => prev.filter((t) => t.tutorialId !== tutorialId));
+      
+      alert("Tutorial unpublished. It's now a draft.");
+    } catch (err) {
+      console.error("Failed to unpublish tutorial", err);
+      alert("Failed to unpublish tutorial. Please try again.");
+    }
   };
 
-  const handlePreview = (e) => {
+  const handlePreview = (e, tutorialId) => {
     e.stopPropagation();
     setOpenDropdownId(null);
-    alert("Preview functionality coming soon!");
+    // Open the public playback URL in a new tab
+    const config = window.gotsConfig || {};
+    const siteUrl = config.siteUrl || window.location.origin;
+    window.open(`${siteUrl}/gots/play/${tutorialId}?preview=1`, '_blank');
+  };
+
+  const handleShare = (e, tutorial) => {
+    e.stopPropagation();
+    setOpenDropdownId(null);
+    setShareModal({
+      isOpen: true,
+      tutorialId: tutorial.tutorialId,
+      tutorialTitle: tutorial.title,
+    });
+  };
+
+  const handleDelete = async (e, tutorial) => {
+    e.stopPropagation();
+    setOpenDropdownId(null);
+
+    const confirmed = window.confirm(
+      `Permanently delete "${tutorial.title}"?\n\nThis tutorial is currently LIVE and accessible to students. Deleting it will immediately remove it and all its content. This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    try {
+      await deleteTutorial(tutorial.tutorialId);
+      setTutorials((prev) => prev.filter((t) => t.tutorialId !== tutorial.tutorialId));
+    } catch (err) {
+      console.error("Failed to delete tutorial", err);
+      alert("Failed to delete tutorial. Please try again.");
+    }
   };
 
   const displayedTutorials = getSortedAndFilteredTutorials();
@@ -225,9 +270,21 @@ export default function PublishedListPage() {
                       </button>
                       <button
                         style={styles.dropdownItem}
-                        onClick={handlePreview}
+                        onClick={(e) => handlePreview(e, tut.tutorialId)}
                       >
                         Preview
+                      </button>
+                      <button
+                        style={styles.dropdownItem}
+                        onClick={(e) => handleShare(e, tut)}
+                      >
+                        Share
+                      </button>
+                      <button
+                        style={{ ...styles.dropdownItem, color: '#dc2626' }}
+                        onClick={(e) => handleDelete(e, tut)}
+                      >
+                        Delete
                       </button>
                     </div>
                   )}
@@ -238,6 +295,13 @@ export default function PublishedListPage() {
         </ul>
         )}
       </main>
+      
+      <ShareModal
+        isOpen={shareModal.isOpen}
+        onClose={() => setShareModal({ isOpen: false, tutorialId: null, tutorialTitle: '' })}
+        tutorialId={shareModal.tutorialId}
+        tutorialTitle={shareModal.tutorialTitle}
+      />
     </div>
   );
 }

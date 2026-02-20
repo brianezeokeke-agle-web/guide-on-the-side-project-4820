@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
-import { listTutorials, updateTutorial } from "../services/tutorialApi";
+import ShareModal from "../components/ShareModal";
+import { listTutorials, updateTutorial, deleteTutorial } from "../services/tutorialApi";
 
 //helper function to get relative time for last edited display
 function getRelativeTime(dateString) {
@@ -30,6 +31,7 @@ export default function TutorialListPage() {
   const [sortBy, setSortBy] = useState("newest");
   const [filterBy, setFilterBy] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [shareModal, setShareModal] = useState({ isOpen: false, tutorialId: null, tutorialTitle: '' });
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -134,7 +136,16 @@ export default function TutorialListPage() {
     setOpenDropdownId(null);
     
     try {
-      await updateTutorial(tutorialId, { archived: true });
+      // Find the tutorial to check if it's published
+      const tut = tutorials.find((t) => t.tutorialId === tutorialId);
+      
+      // If published, unpublish first then archive
+      if (tut && tut.status === 'published') {
+        await updateTutorial(tutorialId, { status: 'draft', archived: true });
+      } else {
+        await updateTutorial(tutorialId, { archived: true });
+      }
+      
       // remove from local state
       setTutorials((prev) => prev.filter((t) => t.tutorialId !== tutorialId));
     } catch (err) {
@@ -142,18 +153,85 @@ export default function TutorialListPage() {
     }
   };
 
-  const handlePublish = (e) => {
+  const handleUnpublish = async (e, tutorialId) => {
     e.stopPropagation();
     setOpenDropdownId(null);
-    // placeholder - no functionality yet
-    alert("Publish functionality coming soon!");
+    
+    try {
+      await updateTutorial(tutorialId, { status: 'draft' });
+      
+      // Update local state
+      setTutorials((prev) =>
+        prev.map((t) =>
+          t.tutorialId === tutorialId ? { ...t, status: 'draft' } : t
+        )
+      );
+    } catch (err) {
+      console.error("Failed to unpublish tutorial", err);
+      alert("Failed to unpublish tutorial. Please try again.");
+    }
   };
 
-  const handlePreview = (e) => {
+  const handlePublish = async (e, tutorialId) => {
     e.stopPropagation();
     setOpenDropdownId(null);
-    // placeholder - no functionality yet
-    alert("Preview functionality coming soon!");
+    
+    try {
+      // Update status to published
+      await updateTutorial(tutorialId, { status: "published" });
+      
+      // Update local state
+      setTutorials((prev) =>
+        prev.map((t) =>
+          t.tutorialId === tutorialId ? { ...t, status: "published" } : t
+        )
+      );
+      
+      // Optionally navigate to published list or show success
+      alert("Tutorial published successfully!");
+    } catch (err) {
+      console.error("Failed to publish tutorial", err);
+      alert("Failed to publish tutorial. Please try again.");
+    }
+  };
+
+  const handlePreview = (e, tutorialId) => {
+    e.stopPropagation();
+    setOpenDropdownId(null);
+    // Open the public playback URL in a new tab
+    const config = window.gotsConfig || {};
+    const siteUrl = config.siteUrl || window.location.origin;
+    window.open(`${siteUrl}/gots/play/${tutorialId}?preview=1`, '_blank');
+  };
+
+  const handleShare = (e, tutorial) => {
+    e.stopPropagation();
+    setOpenDropdownId(null);
+    setShareModal({
+      isOpen: true,
+      tutorialId: tutorial.tutorialId,
+      tutorialTitle: tutorial.title,
+    });
+  };
+
+  const handleDelete = async (e, tutorial) => {
+    e.stopPropagation();
+    setOpenDropdownId(null);
+
+    const isPublished = tutorial.status === 'published';
+    const message = isPublished
+      ? `Permanently delete "${tutorial.title}"?\n\nThis tutorial is currently LIVE and accessible to students. Deleting it will immediately remove it and all its content. This cannot be undone.`
+      : `Permanently delete "${tutorial.title}"?\n\nAll slides and content will be permanently lost. This cannot be undone.`;
+
+    if (!window.confirm(message)) return;
+
+    try {
+      await deleteTutorial(tutorial.tutorialId);
+      setTutorials((prev) => prev.filter((t) => t.tutorialId !== tutorial.tutorialId));
+    } catch (err) {
+      console.error("Failed to delete tutorial", err);
+      alert("Failed to delete tutorial. Please try again.");
+    }
   };
 
   if (loading) {
@@ -265,7 +343,12 @@ export default function TutorialListPage() {
                   <span style={styles.lastModified}>Last modified {getRelativeTime(tut.updatedAt)}</span>
                 </div>
                 <div style={styles.listItemRight}>
-                  <span style={styles.statusBadge}>{tut.status}</span>
+                  <span style={{
+                    ...styles.statusBadge,
+                    ...(tut.status === 'published'
+                      ? { backgroundColor: '#dcfce7', color: '#166534' }
+                      : { backgroundColor: '#fef3c7', color: '#92400e' }),
+                  }}>{tut.status}</span>
                   <div style={styles.dropdownContainer} ref={openDropdownId === tut.tutorialId ? dropdownRef : null}>
                     <button
                       style={styles.dropdownButton}
@@ -288,17 +371,41 @@ export default function TutorialListPage() {
                         >
                           Archive
                         </button>
+                        {tut.status === 'draft' && (
+                          <button
+                            style={styles.dropdownItem}
+                            onClick={(e) => handlePublish(e, tut.tutorialId)}
+                          >
+                            Publish
+                          </button>
+                        )}
+                        {tut.status === 'published' && (
+                          <button
+                            style={styles.dropdownItem}
+                            onClick={(e) => handleUnpublish(e, tut.tutorialId)}
+                          >
+                            Unpublish
+                          </button>
+                        )}
                         <button
                           style={styles.dropdownItem}
-                          onClick={handlePublish}
-                        >
-                          Publish
-                        </button>
-                        <button
-                          style={styles.dropdownItem}
-                          onClick={handlePreview}
+                          onClick={(e) => handlePreview(e, tut.tutorialId)}
                         >
                           Preview
+                        </button>
+                        {tut.status === 'published' && (
+                          <button
+                            style={styles.dropdownItem}
+                            onClick={(e) => handleShare(e, tut)}
+                          >
+                            Share
+                          </button>
+                        )}
+                        <button
+                          style={{ ...styles.dropdownItem, color: '#dc2626' }}
+                          onClick={(e) => handleDelete(e, tut)}
+                        >
+                          Delete
                         </button>
                       </div>
                     )}
@@ -309,6 +416,13 @@ export default function TutorialListPage() {
           </ul>
         )}
       </main>
+      
+      <ShareModal
+        isOpen={shareModal.isOpen}
+        onClose={() => setShareModal({ isOpen: false, tutorialId: null, tutorialTitle: '' })}
+        tutorialId={shareModal.tutorialId}
+        tutorialTitle={shareModal.tutorialTitle}
+      />
     </div>
   );
 }
@@ -441,8 +555,6 @@ const styles = {
     fontSize: "12px",
     fontWeight: "500",
     borderRadius: "9999px",
-    backgroundColor: "#fef3c7",
-    color: "#92400e",
     textTransform: "capitalize",
   },
   dropdownContainer: {

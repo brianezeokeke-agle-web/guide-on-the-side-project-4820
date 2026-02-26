@@ -165,7 +165,7 @@ function gots_render_unavailable_page($message) {
             <h1 class="unavailable-title"><?php echo esc_html__('Tutorial Unavailable', 'guide-on-the-side'); ?></h1>
             <p class="unavailable-message"><?php echo esc_html($message); ?></p>
             <a href="<?php echo esc_url(home_url('/')); ?>" class="unavailable-link">
-                <?php echo esc_html__('← Return to Home', 'guide-on-the-side'); ?>
+                <?php echo esc_html__('Return to Home', 'guide-on-the-side'); ?>
             </a>
         </div>
     </body>

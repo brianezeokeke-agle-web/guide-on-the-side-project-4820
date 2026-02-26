@@ -1034,6 +1034,79 @@ export default function TutorialEditorPage() {
     });
   };
 
+  // validate a single pane and return array of error strings
+  const validatePane = (pane, paneLabel) => {
+    const errors = [];
+    if (!pane || !pane.type) {
+      errors.push(`${paneLabel}: No content type selected`);
+      return errors;
+    }
+
+    switch (pane.type) {
+      case "text":
+        if (!pane.data?.content || !pane.data.content.replace(/<[^>]*>/g, "").trim()) {
+          errors.push(`${paneLabel}: Rich text content cannot be empty`);
+        }
+        break;
+      case "question":
+        if (!pane.data?.questionTitle?.trim()) {
+          errors.push(`${paneLabel}: Question title is required`);
+        }
+        if (!pane.data?.options || pane.data.options.length < 2) {
+          errors.push(`${paneLabel}: At least 2 answer options are required`);
+        } else if (pane.data.options.some((o) => !o.text?.trim())) {
+          errors.push(`${paneLabel}: All answer options must have text`);
+        }
+        if (!pane.data?.correctOptionId) {
+          errors.push(`${paneLabel}: A correct answer must be selected`);
+        }
+        break;
+      case "textQuestion":
+        if (!pane.data?.questionTitle?.trim()) {
+          errors.push(`${paneLabel}: Question title is required`);
+        }
+        if (!pane.data?.correctAnswer?.trim()) {
+          errors.push(`${paneLabel}: Correct answer is required`);
+        }
+        break;
+      case "embed":
+        if (!pane.data?.url?.trim()) {
+          errors.push(`${paneLabel}: Embed URL is required`);
+        } else {
+          try {
+            new URL(pane.data.url.trim());
+          } catch {
+            errors.push(`${paneLabel}: Embed URL is not a valid URL`);
+          }
+        }
+        break;
+      case "media":
+        if (!pane.data?.url) {
+          errors.push(`${paneLabel}: No media file selected`);
+        }
+        break;
+      default:
+        break;
+    }
+    return errors;
+  };
+
+  // get all validation errors for a slide
+  const getSlideValidationErrors = (slide) => {
+    if (!slide) return [];
+    const errors = [];
+    errors.push(...validatePane(slide.leftPane, "Left Pane"));
+    errors.push(...validatePane(slide.rightPane, "Right Pane"));
+    return errors;
+  };
+
+  // check if a slide is valid (no errors)
+  const isSlideValid = (slide) => getSlideValidationErrors(slide).length === 0;
+
+  // check if the current active slide is valid
+  const activeSlideErrors = activeSlide ? getSlideValidationErrors(activeSlide) : [];
+  const isActiveSlideValid = activeSlideErrors.length === 0;
+
   // add a new slide
   const handleAddSlide = async () => {
     if (!tutorial) {
@@ -1325,6 +1398,9 @@ export default function TutorialEditorPage() {
                   <span style={styles.slideDragHandle}>⋮⋮</span>
                   <span style={styles.slideOrder}>{slide.order}</span>
                   <span style={styles.slideTitle}>{slide.title || "Untitled"}</span>
+                  {!isSlideValid(slide) && (
+                    <span style={styles.slideWarningBadge} title="This slide has incomplete content">⚠️</span>
+                  )}
                 </li>
               ))}
           </ul>
@@ -1372,9 +1448,13 @@ export default function TutorialEditorPage() {
           <div style={styles.headerRight}>
             {saveStatus && <span style={styles.saveStatus}>{saveStatus}</span>}
             <button
-              onClick={handleAddSlide}
-              style={styles.addSlideButton}
-              title="Add new slide"
+              onClick={isActiveSlideValid ? handleAddSlide : undefined}
+              disabled={!isActiveSlideValid}
+              style={{
+                ...styles.addSlideButton,
+                ...(isActiveSlideValid ? {} : styles.addSlideButtonDisabled),
+              }}
+              title={isActiveSlideValid ? "Add new slide" : "Complete the current slide before adding a new one"}
             >
               +
             </button>
@@ -1411,6 +1491,20 @@ export default function TutorialEditorPage() {
               )}
             </div>
 
+            {/* Validation errors */}
+            {activeSlideErrors.length > 0 && (
+              <div style={styles.slideValidationContainer}>
+                <div style={styles.slideValidationBanner}>
+                  <strong>This slide is incomplete:</strong>
+                  <ul style={styles.slideValidationList}>
+                    {activeSlideErrors.map((err, i) => (
+                      <li key={i}>{err}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+
             {/* done Editing Button */}
             <div style={styles.doneButtonContainer}>
               <button
@@ -1421,8 +1515,13 @@ export default function TutorialEditorPage() {
                 Delete Slide
               </button>
               <button
-                style={styles.doneButton}
+                disabled={!isActiveSlideValid}
+                style={{
+                  ...styles.doneButton,
+                  ...(isActiveSlideValid ? {} : styles.doneButtonDisabled),
+                }}
                 onClick={async () => {
+                  if (!isActiveSlideValid) return;
                   // Save the current slide before navigating to ensure no data is lost
                   if (activeSlideId) {
                     const currentSlide = tutorialRef.current?.slides?.find((s) => s.slideId === activeSlideId);
@@ -1560,6 +1659,12 @@ const styles = {
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
+    flex: 1,
+  },
+  slideWarningBadge: {
+    fontSize: "14px",
+    flexShrink: 0,
+    marginLeft: "auto",
   },
   main: {
     flex: 1,
@@ -1643,6 +1748,11 @@ const styles = {
     transition: "background-color 0.15s ease",
     boxSizing: "border-box",
   },
+  addSlideButtonDisabled: {
+    opacity: 0.4,
+    cursor: "not-allowed",
+    backgroundColor: "#9ca3af",
+  },
   saveStatus: {
     fontSize: "14px",
     color: "#6b7280",
@@ -1704,6 +1814,28 @@ const styles = {
     border: "none",
     borderRadius: "6px",
     transition: "background-color 0.15s ease",
+  },
+  doneButtonDisabled: {
+    opacity: 0.4,
+    cursor: "not-allowed",
+    backgroundColor: "#9ca3af",
+  },
+  slideValidationContainer: {
+    marginTop: "24px",
+  },
+  slideValidationBanner: {
+    padding: "14px 18px",
+    backgroundColor: "#fffbeb",
+    border: "1px solid #fcd34d",
+    borderRadius: "8px",
+    color: "#92400e",
+    fontSize: "13px",
+    lineHeight: "1.5",
+  },
+  slideValidationList: {
+    margin: "8px 0 0 0",
+    paddingLeft: "20px",
+    listStyleType: "disc",
   },
   paneContainer: {
     padding: "16px",

@@ -372,7 +372,7 @@ export default function StudentApp() {
         return renderMedia(pane.data);
 
       case "embed":
-        return renderEmbed(pane.data, slideId);
+        return renderEmbed(pane.data);
 
       default:
         return <div style={styles.emptyPane}>Unknown content type</div>;
@@ -488,29 +488,9 @@ export default function StudentApp() {
   }
 
   // Render embed
-  function renderEmbed(data, slideId) {
+  function renderEmbed(data) {
     if (!data?.url) {
       return <div style={styles.emptyPane}>No embed URL</div>;
-    }
-
-    // Basic URL validation
-    let isValidUrl = true;
-    try {
-      new URL(data.url.trim());
-    } catch {
-      isValidUrl = false;
-    }
-
-    if (!isValidUrl) {
-      return (
-        <div style={styles.embedErrorContainer}>
-          <h3 style={styles.embedErrorTitle}>Invalid URL</h3>
-          <p style={styles.embedErrorMessage}>
-            The URL provided for this content is not valid.
-          </p>
-          <p style={styles.embedErrorUrl}>{data.url}</p>
-        </div>
-      );
     }
 
     // convert regular youTube watch URLs to embed URLs

@@ -222,7 +222,7 @@ export default function StudentApp() {
         <h1 style={styles.errorTitle}>Tutorial Unavailable</h1>
         <p style={styles.errorMessage}>{error}</p>
         <a href={config.homeUrl} style={styles.errorLink}>
-          ← Return to Home
+          Return to Home
         </a>
       </div>
     );

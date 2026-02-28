@@ -810,7 +810,6 @@ const styles = {
   },
   embedIframe: {
     width: "100%",
-    height: "auto",
     aspectRatio: "16 / 9",
     border: "none",
     borderRadius: "8px",

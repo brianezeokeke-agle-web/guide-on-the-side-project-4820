@@ -234,7 +234,7 @@ export default function StudentApp() {
       <div style={styles.completionContainer}>
         <h1 style={styles.completionTitle}>Tutorial Complete!</h1>
         <p style={styles.completionMessage}>
-          Congratulations! You've completed "{tutorial.title}".
+          Good Job! You've completed {tutorial.title}.
         </p>
         <div style={styles.completionActions}>
           <button
@@ -805,10 +805,12 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     gap: "12px",
+    width: "100%",
+    position: "relative",
   },
   embedIframe: {
     width: "100%",
-    minHeight: "400px",
+    aspectRatio: "16 / 9",
     border: "none",
     borderRadius: "8px",
     backgroundColor: "#f3f4f6",

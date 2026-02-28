@@ -1,5 +1,5 @@
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { getTutorial, updateTutorial } from "../services/tutorialApi";
 import { selectMedia, isMediaLibraryAvailable } from "../services/mediaLibrary";
 
@@ -1100,11 +1100,21 @@ export default function TutorialEditorPage() {
     return errors;
   };
 
-  // check if a slide is valid (no errors)
-  const isSlideValid = (slide) => getSlideValidationErrors(slide).length === 0;
+  // memoize validation results for all slides to avoid recomputing on every render
+  const validationMap = useMemo(() => {
+    const map = {};
+    (tutorial?.slides || []).forEach((slide) => {
+      map[slide.slideId] = getSlideValidationErrors(slide);
+    });
+    return map;
+  }, [tutorial?.slides]);
 
-  // check if the current active slide is valid
-  const activeSlideErrors = activeSlide ? getSlideValidationErrors(activeSlide) : [];
+  //we will meoize here, so tutorials with many slides still maintain low latency
+  // check if a slide is valid using the memoized map
+  const isSlideValid = (slide) => (validationMap[slide?.slideId] || []).length === 0;
+
+  // active slide validation from the memoized map
+  const activeSlideErrors = activeSlide ? (validationMap[activeSlide.slideId] || []) : [];
   const isActiveSlideValid = activeSlideErrors.length === 0;
 
   // add a new slide
@@ -1399,7 +1409,7 @@ export default function TutorialEditorPage() {
                   <span style={styles.slideOrder}>{slide.order}</span>
                   <span style={styles.slideTitle}>{slide.title || "Untitled"}</span>
                   {!isSlideValid(slide) && (
-                    <span style={styles.slideWarningBadge} title="This slide has incomplete content">⚠️</span>
+                    <span style={styles.slideWarningBadge} role="img" aria-label="Incomplete slide" title="This slide has incomplete content">⚠️</span>
                   )}
                 </li>
               ))}

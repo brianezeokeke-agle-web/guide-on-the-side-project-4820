@@ -1109,7 +1109,7 @@ export default function TutorialEditorPage() {
     return map;
   }, [tutorial?.slides]);
 
-  //we will meoize here, so tutorials with many slides still maintain low latency
+  //we will meoize here, so tutorials with many slides still maintain low latency/
   // check if a slide is valid using the memoized map
   const isSlideValid = (slide) => (validationMap[slide?.slideId] || []).length === 0;
 

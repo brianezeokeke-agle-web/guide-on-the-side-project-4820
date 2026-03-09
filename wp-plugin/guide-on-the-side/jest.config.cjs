@@ -1,9 +1,9 @@
 module.exports = {
   testEnvironment: 'jsdom',
   transform: {
-    '^.+\.jsx?$': 'babel-jest',
+    '^.+\\.jsx?$': 'babel-jest',
   },
   moduleNameMapper: {
-    '\.(css|less|scss|sass)$': 'jest-transform-stub',
+    '\\.(css|less|scss|sass)$': 'jest-transform-stub',
   },
 };

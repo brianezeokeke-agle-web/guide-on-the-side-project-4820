@@ -7,7 +7,6 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
-  Cell,
 } from "recharts";
 
 //SlidePerformanceTable — table + optional bar chart showing per-slide

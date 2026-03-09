@@ -689,13 +689,14 @@ function gots_parse_date_range_params($request) {
     $date_from = $request->get_param('dateFrom');
     $date_to   = $request->get_param('dateTo');
 
-    // basic format validation
-    if ($date_from && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_from)) {
-        $date_from = null;
-    }
-    if ($date_to && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_to)) {
-        $date_to = null;
-    }
+    // Vvalidate format and also calendar correctness will reject invalid dates like 2026-99-99
+    $validate_date = function($str) {
+        if (!$str) return null;
+        $dt = \DateTime::createFromFormat('Y-m-d', $str);
+        return ($dt && $dt->format('Y-m-d') === $str) ? $str : null;
+    };
+    $date_from = $validate_date($date_from);
+    $date_to   = $validate_date($date_to);
 
     // normalize range: if both dates are present and out of order, swap them
     if ($date_from && $date_to && $date_from > $date_to) {

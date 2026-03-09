@@ -10,7 +10,7 @@ import { useState, useRef, useEffect } from "react";
  *                              gotsConfig.serverToday so date ranges always
  *                              match the dates stored in the analytics table.
  */
-export default function DateRangeFilter({ value, onChange, serverToday }) {
+export default function DateRangeFilter({ onChange, serverToday }) {
   const [preset, setPreset] = useState("last30");
   const [showCustom, setShowCustom] = useState(false);
   const [customFrom, setCustomFrom] = useState("");

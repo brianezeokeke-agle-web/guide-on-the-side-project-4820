@@ -147,22 +147,18 @@ export default function TutorialListPage() {
     setOpenDropdownId(null);
     
     try {
-      // Find the tutorial to check if it's published
-      const tut = tutorials.find((t) => t.tutorialId === tutorialId);
-      
       // If published, unpublish first then archive
-      if (tut && tut.status === 'published') {
-        await updateTutorial(tutorialId, { status: 'draft', archived: true });
-      } else {
-        await updateTutorial(tutorialId, { archived: true });
-      }
-      
-      // Update local state so the tutorial moves to the "Archived" filter without a refetch
+      const tut = tutorials.find((t) => t.tutorialId === tutorialId);
+      const payload = tut && tut.status === 'published'
+        ? { status: 'draft', archived: true }
+        : { archived: true };
+
+      const updated = await updateTutorial(tutorialId, payload);
+
+      // Update local state from server response to stay in sync
       setTutorials((prev) =>
         prev.map((t) =>
-          t.tutorialId === tutorialId
-            ? { ...t, archived: true, status: 'draft' }
-            : t
+          t.tutorialId === tutorialId ? { ...t, ...updated } : t
         )
       );
     } catch (err) {
@@ -175,11 +171,11 @@ export default function TutorialListPage() {
     setOpenDropdownId(null);
     
     try {
-      await updateTutorial(tutorialId, { archived: false });
-      // Update local state
+      const updated = await updateTutorial(tutorialId, { archived: false });
+      // Update local state from server response
       setTutorials((prev) =>
         prev.map((t) =>
-          t.tutorialId === tutorialId ? { ...t, archived: false } : t
+          t.tutorialId === tutorialId ? { ...t, ...updated } : t
         )
       );
     } catch (err) {
@@ -193,12 +189,11 @@ export default function TutorialListPage() {
     setOpenDropdownId(null);
     
     try {
-      await updateTutorial(tutorialId, { status: 'draft' });
-      
-      // Update local state
+      const updated = await updateTutorial(tutorialId, { status: 'draft' });
+      // Update local state from server response
       setTutorials((prev) =>
         prev.map((t) =>
-          t.tutorialId === tutorialId ? { ...t, status: 'draft' } : t
+          t.tutorialId === tutorialId ? { ...t, ...updated } : t
         )
       );
     } catch (err) {
@@ -212,17 +207,13 @@ export default function TutorialListPage() {
     setOpenDropdownId(null);
     
     try {
-      // Update status to published
-      await updateTutorial(tutorialId, { status: "published" });
-      
-      // Update local state
+      const updated = await updateTutorial(tutorialId, { status: "published" });
+      // Update local state from server response
       setTutorials((prev) =>
         prev.map((t) =>
-          t.tutorialId === tutorialId ? { ...t, status: "published" } : t
+          t.tutorialId === tutorialId ? { ...t, ...updated } : t
         )
       );
-      
-      // Optionally navigate to published list or show success
       alert("Tutorial published successfully!");
     } catch (err) {
       console.error("Failed to publish tutorial", err);

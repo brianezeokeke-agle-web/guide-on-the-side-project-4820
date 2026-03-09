@@ -59,11 +59,12 @@ export default function TutorialAnalyticsPage() {
   const [trend, setTrend] = useState(null);
   const [slides, setSlides] = useState(null);
 
-  // Loading / error
+  // Loading / error / retry
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [retryCount, setRetryCount] = useState(0);
 
-  // Load tutorial metadata once
+  // Load tutorial metadata (re-runs on retry)
   useEffect(() => {
     async function load() {
       try {
@@ -74,7 +75,7 @@ export default function TutorialAnalyticsPage() {
       }
     }
     load();
-  }, [id]);
+  }, [id, retryCount]);
 
   // Load all analytics data when date range changes
   useEffect(() => {
@@ -97,7 +98,7 @@ export default function TutorialAnalyticsPage() {
       }
     }
     loadAnalytics();
-  }, [id, dateRange]);
+  }, [id, dateRange, retryCount]);
 
   const pct = (rate) => `${(rate * 100).toFixed(1)}%`;
 
@@ -124,16 +125,17 @@ export default function TutorialAnalyticsPage() {
             </p>
           </div>
           <div style={styles.headerRight}>
-            <DateRangeFilter value={dateRange} onChange={setDateRange} serverToday={serverToday} />
+            <DateRangeFilter onChange={setDateRange} serverToday={serverToday} />
           </div>
         </div>
 
         {/* Error state */}
         {error && (
           <div style={styles.errorBanner}>
+            <span>{error}</span>
             <button
               style={styles.retryButton}
-              onClick={() => setDateRange({ ...dateRange })}
+              onClick={() => setRetryCount((c) => c + 1)}
             >
               Retry
             </button>

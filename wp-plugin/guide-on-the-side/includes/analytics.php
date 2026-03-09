@@ -76,7 +76,7 @@ function gots_record_analytics_event($tutorial_id, $event_type, $slide_id = null
 
     // Atomic upsert — the UNIQUE KEY (tutorial_id, event_type, slide_id, event_date)
     // ensures no duplicate rows, even under concurrent requests.
-    $wpdb->query($wpdb->prepare(
+    $result = $wpdb->query($wpdb->prepare(
         "INSERT INTO $table_name (tutorial_id, event_type, slide_id, event_date, event_count)
          VALUES (%d, %s, %s, %s, 1)
          ON DUPLICATE KEY UPDATE event_count = event_count + 1",
@@ -86,7 +86,7 @@ function gots_record_analytics_event($tutorial_id, $event_type, $slide_id = null
         $date
     ));
 
-    return true;
+    return $result !== false;
 }
 
 //get tutorial level analytics

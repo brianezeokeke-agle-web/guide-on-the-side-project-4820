@@ -1,5 +1,5 @@
-// import { useRef } from "react";
-// import { createProgressTracker } from "./utils/progressTracker";
+import { useRef } from "react";
+import { createProgressTracker } from "./utils/progressTracker";
 
 /**
  * Get student configuration from WordPress

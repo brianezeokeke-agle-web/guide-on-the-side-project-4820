@@ -192,9 +192,21 @@ function gots_format_tutorial_response($post) {
         }
     }
     
-    // format dates as ISO 8601
-    $created_at = get_post_time('c', true, $post);
-    $updated_at = get_post_modified_time('c', true, $post);
+    // Format dates as ISO 8601 using LOCAL time (second param = false).
+    // WordPress zeroes out post_date_gmt / post_modified_gmt for draft
+    // posts, so using GMT (true) returns "0000-00-00" or false.
+    // Local time (false) uses post_date / post_modified which WP always
+    // populates regardless of post status.
+    $created_at = get_post_time('c', false, $post);
+    $updated_at = get_post_modified_time('c', false, $post);
+
+    // fallback here: if either is still falsy, just use the other (or current time)
+    if (empty($created_at) || strpos($created_at, '0000') === 0) {
+        $created_at = $updated_at ?: current_time('c');
+    }
+    if (empty($updated_at) || strpos($updated_at, '0000') === 0) {
+        $updated_at = $created_at;
+    }
     
     return array(
         'tutorialId'  => (string) $post->ID,

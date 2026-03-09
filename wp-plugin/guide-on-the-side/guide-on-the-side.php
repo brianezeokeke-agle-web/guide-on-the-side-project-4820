@@ -29,6 +29,7 @@ require_once GOTS_PLUGIN_DIR . 'includes/post-types.php';
 require_once GOTS_PLUGIN_DIR . 'includes/rest-routes.php';
 require_once GOTS_PLUGIN_DIR . 'includes/enqueue.php';
 require_once GOTS_PLUGIN_DIR . 'includes/public-playback.php';
+require_once GOTS_PLUGIN_DIR . 'includes/analytics.php';
 
 /**
  * the plugin activation hook
@@ -39,6 +40,9 @@ function gots_activate() {
     
     // register public playback rewrite rules
     gots_register_public_rewrite_rules();
+    
+    // create the analytics table
+    gots_create_analytics_table();
     
     // flush rewrite rules to ensure CPT permalinks work
     flush_rewrite_rules();

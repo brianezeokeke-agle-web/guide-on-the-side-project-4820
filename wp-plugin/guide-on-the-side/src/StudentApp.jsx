@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+// import { useRef } from "react";
+// import { createProgressTracker } from "./utils/progressTracker";
 
 /**
  * Get student configuration from WordPress
@@ -20,6 +21,22 @@ function getConfig() {
  */
 async function fetchTutorial(tutorialId) {
   const config = getConfig();
+  async function postEvent(event) {
+    try{
+      await fetch(`${config.restUrl}/events`, {
+        method: "POST",
+        headers: {
+          "Content Type": "application/json",
+          ...StudentApp(config.nonce? { "X-WP-Nonce": config.nonce } : {}),
+        },
+        credentials: "include",
+        body: JSON.stringfly(event),
+      });
+    } catch (e) {
+      // Do not block playback if analytics fails
+      console.warn("Analytics event failed", e);
+    }
+  }
   const isPreview = config.isPreview;
   const url = `${config.restUrl}/tutorials/${tutorialId}/public${isPreview ? '?preview=1' : ''}`;
   
@@ -49,8 +66,25 @@ export default function StudentApp() {
   const [answers, setAnswers] = useState({});
   const [feedback, setFeedback] = useState({});
   const [completed, setCompleted] = useState(false);
+  const trackerRef = useRef(null);
 
   const config = getConfig();
+
+  async function postEvent(event) {
+    try{
+      const headers = { "Content-Type": "application/json" };
+      if (config.nonce) headers["X-WP-Nonce"] = config.nonce;
+
+      await fetch(`${config.restUrl}/events`, {
+        method: "POST",
+        headers,
+        credentials: "include",
+        body: JSON.stringify(event),
+      });
+    } catch (e) {
+      console.warn("Failed to send analytics event", e);
+    }
+  }
 
   // Load tutorial on mount
   useEffect(() => {
@@ -77,6 +111,29 @@ export default function StudentApp() {
 
     loadTutorial();
   }, [config.tutorialId]);
+
+  useEffect(() => {
+    if (!tutorial?.slides?.length || !config.tutorialId) return;
+
+    const slideIds = tutorial.slides.map((s) => s.slideId);
+
+    trackerRef.current = currentProgressTracker({
+      tutorialId: config.tutorialId,
+      slideIds,
+      onEvent: postEvent,
+    });
+
+    trackerRef.current.start();
+  }, [tutorial, config.tutorialId]);
+
+  useEffect(() => {
+    if (!trackerRef.current) return;
+    if (!slides.length) return;
+    const slide = slides[currentSlideIndex];
+    if (!slide) return;
+
+    trackerRef.current.viewSlide(slide.slideId, currentSlideIndex);
+  }, [currentSlideIndex, slides]);
 
   // Get current slide
   const slides = tutorial?.slides || [];
@@ -199,7 +256,16 @@ export default function StudentApp() {
     
     // Proceed to next slide or complete
     if (isLastSlide) {
-      setCompleted(true);
+      // Only mark completed if tracker says so (visited all + last slide)
+      const done = trackerRef.current?.isCompleted?.() === true;
+
+      // If slides length is 1, visiting last slide is also visiting all
+      if (done || slides.length <= 1) {
+        setCompleted(true)
+      } else {
+        // allow completion( optional)
+        alert("Please visit all slides before completing the tutorial.");
+      }
     } else {
       setCurrentSlideIndex((prev) => prev + 1);
     }

@@ -7,6 +7,7 @@ export default function Sidebar() {
       <Link to="/tutorials" style={styles.navLink}>All Tutorials</Link>
       <Link to="/tutorials/published" style={styles.navLink}>Published</Link>
       <Link to="/tutorials/archived" style={styles.navLink}>Archived</Link>
+      <Link to="/completed" style={styles.navLink}>Completed</Link>
       <div style={styles.navItem}>Settings</div>
 
       {/* empty scaffolding space for future navigation items */}

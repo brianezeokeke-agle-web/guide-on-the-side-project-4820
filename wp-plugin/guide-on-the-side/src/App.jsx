@@ -5,6 +5,7 @@ import CreateTutorialPage from "./pages/CreateTutorialPage";
 import TutorialEditorPage from "./pages/TutorialEditorPage";
 import PublishedListPage from "./pages/PublishedListPage";
 import ArchivedListPage from "./pages/ArchivedListPage";
+import CompletedTutorialsPage from "./pages/CompletedTutorialsPage";
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
       <Route path="/tutorials/archived" element={<ArchivedListPage />} />
       <Route path="/tutorials/new" element={<CreateTutorialPage />} />
       <Route path="/tutorials/:id/edit" element={<TutorialEditorPage />} />
+      <Route path="/completed" element={<CompletedTutorialsPage />} />
     </Routes>
   );
 }

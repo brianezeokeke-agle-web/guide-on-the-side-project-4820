@@ -86,6 +86,72 @@ function gots_register_rest_routes() {
             ),
         ),
     ));
+
+    register_rest_route($namespace, '/events', array(
+        'methods' => 'POST',
+        'permission_callback' => function () {
+            return is_user_logged_in();
+        },
+        'callback' => function (WP_REST_Request $request) {
+            $user_id = get_current_user_id();
+            $body = $request->get_json_params();
+
+            $type = isset($body['type']) ? sanitize_text_field($body['type']) : '';
+            $tutorial_id = isset($body['tutorialId']) ? sanitize_text_field((string)$body['tutorialId']) : '';
+            $ts = isset($body['ts']) ? intval($body['ts']) : time() * 1000;
+
+            if (!$type || !$tutorial_id) {
+                return new WP_REST_Response(array('error' => 'Missing type or tutorialId'), 400);
+            }
+
+            //Store lightweight per-user analytics counts
+            $counts_key = 'got_analytics_counts';
+            $counts = get_user_meta($user_id, $counts_key, true);
+            if (!is_array($counts)) $counts = array();
+
+            if (!isset($counts[$tutorial_id])) {
+                $counts[$tutorial_id] = array(
+                    'tutorial_start' => 0,
+                    'slide_view' => 0,
+                    'tutorial_complete' => 0,
+                    'last_ts' => 0
+                );
+            }
+
+            if (isset($counts[$tutorial_id][$type])) {
+                $counts[$tutorial_id][$type] = intval($counts[$tutorial_id][$type]) + 1;
+            }
+            $counts[$tutorial_id]['last_ts'] = $ts;
+
+            update_user_meta($user_id, $counts_key, $counts);
+
+            // Store completed list
+            if ($type === 'tutorial_complete') {
+                $completed_key = 'gots_completed tutorials';
+                $completed = get_user_meta($user_id, $completed_key, true);
+                if (!is_array($completed)) $completed = array();
+
+                if (!in_array($tutorial_id, $completed, true)) {
+                    $completed[] = $tutorial_id;
+                    update_user_meta($user_id, $completed_key, $completed);
+                }
+            }
+            return new WP_REST_Response(array('ok' => true), 200);
+        }
+    ));
+
+    register_rest_route($namespace, '/completed', array(
+        'methods' => 'GET',
+        'permission_callback' => function () {
+            return is_user_logged_in();
+        },
+        'callback' => function() {
+            $user_id = get_current_user_id();
+            $completed = get_user_meta($user_id, 'gots_completed_tutorials', true);
+            if( !is_array($completed)) $completed = array();
+            return new WP_REST_Response($completed, 200);
+        }
+    ));
 }
 
 /**

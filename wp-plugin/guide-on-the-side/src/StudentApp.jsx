@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { recordAnalyticsEvent } from "./services/analyticsApi";
 
 /**
  * Get student configuration from WordPress
@@ -52,6 +53,35 @@ export default function StudentApp() {
 
   const config = getConfig();
 
+  //analytics tracking!!
+  // Track which slideIndex we last fired slide_viewed for, to prevent duplicate fires from re-renders at the same index
+  const lastViewedSlideIndex = useRef(-1);
+  // Tracks whether tutorial_started has fired this session — reset on completion so restarts count
+  const hasStarted = useRef(false);
+
+  // get the current slide data early so analytics effects can reference it
+  const slides = tutorial?.slides || [];
+  const currentSlide = slides[currentSlideIndex];
+
+  // track slide_viewed every time the active slide changes.
+  // also track tutorial_started when slide index 0 is viewed. this just saves us stress and lets us piggy back lol
+  useEffect(() => {
+    if (!tutorial || config.isPreview) return;
+    const slide = slides[currentSlideIndex];
+    if (!slide) return;
+    // only fire once per index change to prevent re render duplicates
+    if (lastViewedSlideIndex.current === currentSlideIndex) return;
+    lastViewedSlideIndex.current = currentSlideIndex;
+
+    recordAnalyticsEvent(config.tutorialId, 'slide_viewed', slide.slideId);
+
+    // Fire tutorial_started only once per session (resets after completion so restarts count)
+    if (currentSlideIndex === 0 && !hasStarted.current) {
+      hasStarted.current = true;
+      recordAnalyticsEvent(config.tutorialId, 'tutorial_started');
+    }
+  }, [currentSlideIndex, tutorial, config.tutorialId, config.isPreview]);
+
   // Load tutorial on mount
   useEffect(() => {
     async function loadTutorial() {
@@ -78,9 +108,7 @@ export default function StudentApp() {
     loadTutorial();
   }, [config.tutorialId]);
 
-  // Get current slide
-  const slides = tutorial?.slides || [];
-  const currentSlide = slides[currentSlideIndex];
+  // derive slide navigation state (slides/currentSlide already declared above for analytics)
   const isFirstSlide = currentSlideIndex === 0;
   const isLastSlide = currentSlideIndex === slides.length - 1;
 
@@ -197,7 +225,20 @@ export default function StudentApp() {
       }
     }
     
-    // Proceed to next slide or complete
+    // Proceed to next slide or complete tut
+    // track slide_proceeded for the current slide ie the user moved to the next slide
+    if (currentSlide && !config.isPreview) {
+      recordAnalyticsEvent(config.tutorialId, 'slide_proceeded', currentSlide.slideId);
+
+      // some more piggybacking. the last slide indicates that the tutorial is complete
+      if (isLastSlide) {
+        recordAnalyticsEvent(config.tutorialId, 'tutorial_completed');
+        // Reset so a restart fires a new tutorial_started
+        hasStarted.current = false;
+        lastViewedSlideIndex.current = -1;
+      }
+    }
+
     if (isLastSlide) {
       setCompleted(true);
     } else {

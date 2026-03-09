@@ -41,9 +41,7 @@ export default function TutorialListPage() {
       try {
         setLoading(true);
         const data = await listTutorials();
-        // filter out archived tutorials for the main list (show drafts and published, not archived)
-        const activeTutorials = data.filter((t) => !t.archived);
-        setTutorials(activeTutorials);
+        setTutorials(data);
       } catch (err) {
         console.error("Failed to load tutorials", err);
       } finally {
@@ -58,10 +56,15 @@ export default function TutorialListPage() {
     let result = [...tutorials];
 
     // Apply status filter
-    if (filterBy === "unpublished") {
-      result = result.filter((t) => t.status === "draft");
+    if (filterBy === "all") {
+      result = result.filter((t) => !t.archived);
+    } else if (filterBy === "published") {
+      result = result.filter((t) => t.status === "published" && !t.archived);
+    } else if (filterBy === "unpublished") {
+      result = result.filter((t) => t.status === "draft" && !t.archived);
+    } else if (filterBy === "archived") {
+      result = result.filter((t) => t.archived);
     }
-    // "all" shows all active (non-archived) tutorials
 
     // Apply search filter
     if (searchQuery.trim()) {
@@ -72,6 +75,14 @@ export default function TutorialListPage() {
       );
     }
 
+    // Safe date parser: returns a numeric timestamp for sorting.
+    // Ascending sorts use Infinity as fallback so missing dates land at the end.
+    const safeTime = (v, fallback = 0) => {
+      if (!v) return fallback;
+      const t = new Date(v).getTime();
+      return Number.isNaN(t) ? fallback : t;
+    };
+
     // Apply sorting
     result.sort((a, b) => {
       switch (sortBy) {
@@ -80,13 +91,13 @@ export default function TutorialListPage() {
         case "alphabetical-desc":
           return b.title.localeCompare(a.title);
         case "newest":
-          return new Date(b.createdAt) - new Date(a.createdAt);
+          return safeTime(b.createdAt) - safeTime(a.createdAt);
         case "oldest":
-          return new Date(a.createdAt) - new Date(b.createdAt);
+          return safeTime(a.createdAt, Infinity) - safeTime(b.createdAt, Infinity);
         case "modified-newest":
-          return new Date(b.updatedAt) - new Date(a.updatedAt);
+          return safeTime(b.updatedAt) - safeTime(a.updatedAt);
         case "modified-oldest":
-          return new Date(a.updatedAt) - new Date(b.updatedAt);
+          return safeTime(a.updatedAt, Infinity) - safeTime(b.updatedAt, Infinity);
         default:
           return 0;
       }
@@ -136,20 +147,40 @@ export default function TutorialListPage() {
     setOpenDropdownId(null);
     
     try {
-      // Find the tutorial to check if it's published
-      const tut = tutorials.find((t) => t.tutorialId === tutorialId);
-      
       // If published, unpublish first then archive
-      if (tut && tut.status === 'published') {
-        await updateTutorial(tutorialId, { status: 'draft', archived: true });
-      } else {
-        await updateTutorial(tutorialId, { archived: true });
-      }
-      
-      // remove from local state
-      setTutorials((prev) => prev.filter((t) => t.tutorialId !== tutorialId));
+      const tut = tutorials.find((t) => t.tutorialId === tutorialId);
+      const payload = tut && tut.status === 'published'
+        ? { status: 'draft', archived: true }
+        : { archived: true };
+
+      const updated = await updateTutorial(tutorialId, payload);
+
+      // Update local state from server response to stay in sync
+      setTutorials((prev) =>
+        prev.map((t) =>
+          t.tutorialId === tutorialId ? { ...t, ...updated } : t
+        )
+      );
     } catch (err) {
       console.error("Failed to archive tutorial", err);
+    }
+  };
+
+  const handleRestore = async (e, tutorialId) => {
+    e.stopPropagation();
+    setOpenDropdownId(null);
+    
+    try {
+      const updated = await updateTutorial(tutorialId, { archived: false });
+      // Update local state from server response
+      setTutorials((prev) =>
+        prev.map((t) =>
+          t.tutorialId === tutorialId ? { ...t, ...updated } : t
+        )
+      );
+    } catch (err) {
+      console.error("Failed to restore tutorial", err);
+      alert("Failed to restore tutorial. Please try again.");
     }
   };
 
@@ -158,12 +189,11 @@ export default function TutorialListPage() {
     setOpenDropdownId(null);
     
     try {
-      await updateTutorial(tutorialId, { status: 'draft' });
-      
-      // Update local state
+      const updated = await updateTutorial(tutorialId, { status: 'draft' });
+      // Update local state from server response
       setTutorials((prev) =>
         prev.map((t) =>
-          t.tutorialId === tutorialId ? { ...t, status: 'draft' } : t
+          t.tutorialId === tutorialId ? { ...t, ...updated } : t
         )
       );
     } catch (err) {
@@ -177,17 +207,13 @@ export default function TutorialListPage() {
     setOpenDropdownId(null);
     
     try {
-      // Update status to published
-      await updateTutorial(tutorialId, { status: "published" });
-      
-      // Update local state
+      const updated = await updateTutorial(tutorialId, { status: "published" });
+      // Update local state from server response
       setTutorials((prev) =>
         prev.map((t) =>
-          t.tutorialId === tutorialId ? { ...t, status: "published" } : t
+          t.tutorialId === tutorialId ? { ...t, ...updated } : t
         )
       );
-      
-      // Optionally navigate to published list or show success
       alert("Tutorial published successfully!");
     } catch (err) {
       console.error("Failed to publish tutorial", err);
@@ -251,7 +277,12 @@ export default function TutorialListPage() {
 
       <main style={styles.main}>
         <div style={styles.header}>
-          <h1 style={styles.heading}>Your Tutorials</h1>
+          <h1 style={styles.heading}>
+            {filterBy === "published" ? "Published Tutorials" :
+             filterBy === "unpublished" ? "Unpublished Tutorials" :
+             filterBy === "archived" ? "Archived Tutorials" :
+             "Your Tutorials"}
+          </h1>
           <button
             style={styles.newButton}
             onClick={() => navigate("/tutorials/new")}
@@ -297,17 +328,7 @@ export default function TutorialListPage() {
               <label style={styles.controlLabel}>Filter:</label>
               <select
                 value={filterBy}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  if (value === "published") {
-                    navigate("/tutorials/published");
-                  } else if (value === "archived") {
-                    navigate("/tutorials/archived");
-                  } else {
-                    // "all" or "unpublished" stays on current page
-                    setFilterBy(value);
-                  }
-                }}
+                onChange={(e) => setFilterBy(e.target.value)}
                 style={styles.selectInput}
               >
                 <option value="all">All Tutorials</option>
@@ -323,9 +344,13 @@ export default function TutorialListPage() {
           <p style={styles.emptyText}>
             {searchQuery 
               ? "No tutorials match your search." 
-              : filterBy === "unpublished"
-                ? "No unpublished (draft) tutorials found."
-                : "No tutorials yet. Click \"New Tutorial\" to get started."}
+              : filterBy === "published"
+                ? "No published tutorials found."
+                : filterBy === "unpublished"
+                  ? "No unpublished (draft) tutorials found."
+                  : filterBy === "archived"
+                    ? "No archived tutorials found."
+                    : "No tutorials yet. Click \"New Tutorial\" to get started."}
           </p>
         ) : (
           <ul style={styles.list}>
@@ -345,18 +370,31 @@ export default function TutorialListPage() {
                 <div style={styles.listItemRight}>
                   <span style={{
                     ...styles.statusBadge,
-                    ...(tut.status === 'published'
-                      ? { backgroundColor: '#dcfce7', color: '#166534' }
-                      : { backgroundColor: '#fef3c7', color: '#92400e' }),
-                  }}>{tut.status}</span>
+                    ...(tut.archived
+                      ? { backgroundColor: '#f3f4f6', color: '#6b7280' }
+                      : tut.status === 'published'
+                        ? { backgroundColor: '#dcfce7', color: '#166534' }
+                        : { backgroundColor: '#fef3c7', color: '#92400e' }),
+                  }}>{tut.archived ? 'archived' : tut.status}</span>
                   <div style={styles.dropdownContainer} ref={openDropdownId === tut.tutorialId ? dropdownRef : null}>
-                    <button
-                      style={styles.dropdownButton}
-                      onClick={(e) => toggleDropdown(e, tut.tutorialId)}
-                      title="Actions"
-                    >
-                      ▼
-                    </button>
+                    <div style={styles.splitButton}>
+                      <button
+                        style={styles.splitButtonLabel}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/tutorials/${tut.tutorialId}/analytics`);
+                        }}
+                      >
+                        View Analytics
+                      </button>
+                      <button
+                        style={styles.splitButtonArrow}
+                        onClick={(e) => toggleDropdown(e, tut.tutorialId)}
+                        title="Actions"
+                      >
+                        ▾
+                      </button>
+                    </div>
                     {openDropdownId === tut.tutorialId && (
                       <div style={styles.dropdownMenu}>
                         <button
@@ -365,27 +403,38 @@ export default function TutorialListPage() {
                         >
                           Edit
                         </button>
-                        <button
-                          style={styles.dropdownItem}
-                          onClick={(e) => handleArchive(e, tut.tutorialId)}
-                        >
-                          Archive
-                        </button>
-                        {tut.status === 'draft' && (
+                        {tut.archived ? (
                           <button
                             style={styles.dropdownItem}
-                            onClick={(e) => handlePublish(e, tut.tutorialId)}
+                            onClick={(e) => handleRestore(e, tut.tutorialId)}
                           >
-                            Publish
+                            Restore
                           </button>
-                        )}
-                        {tut.status === 'published' && (
-                          <button
-                            style={styles.dropdownItem}
-                            onClick={(e) => handleUnpublish(e, tut.tutorialId)}
-                          >
-                            Unpublish
-                          </button>
+                        ) : (
+                          <>
+                            <button
+                              style={styles.dropdownItem}
+                              onClick={(e) => handleArchive(e, tut.tutorialId)}
+                            >
+                              Archive
+                            </button>
+                            {tut.status === 'draft' && (
+                              <button
+                                style={styles.dropdownItem}
+                                onClick={(e) => handlePublish(e, tut.tutorialId)}
+                              >
+                                Publish
+                              </button>
+                            )}
+                            {tut.status === 'published' && (
+                              <button
+                                style={styles.dropdownItem}
+                                onClick={(e) => handleUnpublish(e, tut.tutorialId)}
+                              >
+                                Unpublish
+                              </button>
+                            )}
+                          </>
                         )}
                         <button
                           style={styles.dropdownItem}
@@ -393,7 +442,7 @@ export default function TutorialListPage() {
                         >
                           Preview
                         </button>
-                        {tut.status === 'published' && (
+                        {tut.status === 'published' && !tut.archived && (
                           <button
                             style={styles.dropdownItem}
                             onClick={(e) => handleShare(e, tut)}
@@ -405,7 +454,7 @@ export default function TutorialListPage() {
                           style={{ ...styles.dropdownItem, color: '#dc2626' }}
                           onClick={(e) => handleDelete(e, tut)}
                         >
-                          Delete
+                          {tut.archived ? 'Delete Permanently' : 'Delete'}
                         </button>
                       </div>
                     )}
@@ -560,15 +609,36 @@ const styles = {
   dropdownContainer: {
     position: "relative",
   },
-  dropdownButton: {
-    padding: "6px 10px",
-    fontSize: "10px",
+  splitButton: {
+    display: "flex",
+    alignItems: "stretch",
+    border: "1px solid #7B2D26",
+    borderRadius: "6px",
+    overflow: "hidden",
+  },
+  splitButtonLabel: {
+    padding: "6px 14px",
+    fontSize: "13px",
+    fontWeight: "500",
     cursor: "pointer",
-    backgroundColor: "#f3f4f6",
-    border: "1px solid #d1d5db",
-    borderRadius: "4px",
-    color: "#374151",
+    backgroundColor: "#fff",
+    color: "#7B2D26",
+    border: "none",
+    borderRight: "1px solid #7B2D26",
     transition: "background-color 0.15s ease",
+    whiteSpace: "nowrap",
+  },
+  splitButtonArrow: {
+    padding: "6px 10px",
+    fontSize: "12px",
+    cursor: "pointer",
+    backgroundColor: "#fff",
+    color: "#7B2D26",
+    border: "none",
+    transition: "background-color 0.15s ease",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
   dropdownMenu: {
     position: "absolute",

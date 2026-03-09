@@ -1,12 +1,33 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 export default function Sidebar() {
+  const location = useLocation();
+
+  const isActive = (path) => {
+    if (path === "/") return location.pathname === "/";
+    return location.pathname.startsWith(path);
+  };
+
   return (
     <aside style={styles.sidebar}>
-      <Link to="/" style={styles.navLink}>Home</Link>
-      <Link to="/tutorials" style={styles.navLink}>All Tutorials</Link>
-      <Link to="/tutorials/published" style={styles.navLink}>Published</Link>
-      <Link to="/tutorials/archived" style={styles.navLink}>Archived</Link>
+      <Link
+        to="/"
+        style={{
+          ...styles.navLink,
+          ...(isActive("/") ? styles.navLinkActive : {}),
+        }}
+      >
+        Home
+      </Link>
+      <Link
+        to="/tutorials"
+        style={{
+          ...styles.navLink,
+          ...(isActive("/tutorials") ? styles.navLinkActive : {}),
+        }}
+      >
+        My Tutorials
+      </Link>
       <div style={styles.navItem}>Settings</div>
 
       {/* empty scaffolding space for future navigation items */}
@@ -44,5 +65,10 @@ const styles = {
     color: "#374151",
     textDecoration: "none",
     transition: "background-color 0.15s ease",
+  },
+  navLinkActive: {
+    backgroundColor: "#f5e6e4",
+    color: "#7B2D26",
+    fontWeight: "600",
   },
 };

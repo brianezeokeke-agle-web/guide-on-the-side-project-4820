@@ -86,6 +86,45 @@ function gots_register_rest_routes() {
             ),
         ),
     ));
+
+    //analytics endpoints begin from here
+
+    // POST /analytics/event - to record an anonymous analytics event. this needs no auth
+    register_rest_route($namespace, '/analytics/event', array(
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'gots_rest_record_analytics_event',
+        'permission_callback' => 'gots_rest_permissions_check_public',
+    ));
+
+    // GET /tutorials/{id}/analytics/summary - get the tutorial summary (admin)
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/analytics/summary', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_get_analytics_summary',
+        'permission_callback' => 'gots_rest_permissions_check_read',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // GET /tutorials/{id}/analytics/trend - get the daily trend data (admin)
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/analytics/trend', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_get_analytics_trend',
+        'permission_callback' => 'gots_rest_permissions_check_read',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // GET /tutorials/{id}/analytics/slides - get the slide performance data (admin)
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/analytics/slides', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_get_analytics_slides',
+        'permission_callback' => 'gots_rest_permissions_check_read',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
 }
 
 /**
@@ -573,4 +612,158 @@ function gots_rest_delete_tutorial($request) {
         'deleted' => true,
         'tutorialId' => (string) $id,
     ));
+}
+
+//analytics REST callbacks 
+
+//Record an anonymous analytics event, this endpoint is public
+function gots_rest_record_analytics_event($request) {
+    $params = $request->get_json_params();
+
+    $tutorial_id = isset($params['tutorialId']) ? absint($params['tutorialId']) : 0;
+    $event_type  = isset($params['eventType']) ? sanitize_text_field($params['eventType']) : '';
+    $slide_id    = isset($params['slideId']) ? sanitize_text_field($params['slideId']) : null;
+    $token       = isset($params['token']) ? sanitize_text_field($params['token']) : '';
+
+    if (!$tutorial_id || !$event_type) {
+        return new WP_Error(
+            'invalid_event',
+            __('tutorialId and eventType are required.', 'guide-on-the-side'),
+            array('status' => 400)
+        );
+    }
+
+    // Verify the HMAC token matches — rejects requests not originating from a real playback page
+    $expected_token = hash_hmac('sha256', 'gots_analytics_' . $tutorial_id, wp_salt('auth'));
+    if (!hash_equals($expected_token, $token)) {
+        return new WP_Error(
+            'invalid_token',
+            __('Invalid analytics token.', 'guide-on-the-side'),
+            array('status' => 403)
+        );
+    }
+
+    // Simple rate limit — max 60 events per IP per minute via a transient
+    $ip_hash    = md5($_SERVER['REMOTE_ADDR'] ?? 'unknown');
+    $rate_key   = 'gots_rate_' . $ip_hash;
+    $rate_count = (int) get_transient($rate_key);
+    if ($rate_count >= 60) {
+        return new WP_Error(
+            'rate_limited',
+            __('Too many requests. Please slow down.', 'guide-on-the-side'),
+            array('status' => 429)
+        );
+    }
+    set_transient($rate_key, $rate_count + 1, 60);
+
+    // Verify that the tutorial exists
+    $post = get_post($tutorial_id);
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error(
+            'tutorial_not_found',
+            __('Tutorial not found.', 'guide-on-the-side'),
+            array('status' => 404)
+        );
+    }
+
+    $success = gots_record_analytics_event($tutorial_id, $event_type, $slide_id);
+
+    if (!$success) {
+        return new WP_Error(
+            'event_failed',
+            __('Failed to record event.', 'guide-on-the-side'),
+            array('status' => 400)
+        );
+    }
+
+    return rest_ensure_response(array('recorded' => true));
+}
+
+/**
+ * Parse common date range params from request.
+ *
+ * @param WP_REST_Request $request
+ * @return array {date_from, date_to}
+ */
+function gots_parse_date_range_params($request) {
+    $date_from = $request->get_param('dateFrom');
+    $date_to   = $request->get_param('dateTo');
+
+    // Vvalidate format and also calendar correctness will reject invalid dates like 2026-99-99
+    $validate_date = function($str) {
+        if (!$str) return null;
+        $dt = \DateTime::createFromFormat('Y-m-d', $str);
+        return ($dt && $dt->format('Y-m-d') === $str) ? $str : null;
+    };
+    $date_from = $validate_date($date_from);
+    $date_to   = $validate_date($date_to);
+
+    // normalize range: if both dates are present and out of order, swap them
+    if ($date_from && $date_to && $date_from > $date_to) {
+        $tmp       = $date_from;
+        $date_from = $date_to;
+        $date_to   = $tmp;
+    }
+
+    return array('date_from' => $date_from, 'date_to' => $date_to);
+}
+
+/**
+ * GET /tutorials/{id}/analytics/summary
+ *
+ * @param WP_REST_Request $request
+ * @return WP_REST_Response|WP_Error
+ */
+function gots_rest_get_analytics_summary($request) {
+    $id = absint($request->get_param('id'));
+
+    $post = get_post($id);
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error('tutorial_not_found', __('Tutorial not found.', 'guide-on-the-side'), array('status' => 404));
+    }
+
+    $range   = gots_parse_date_range_params($request);
+    $summary = gots_get_analytics_summary($id, $range['date_from'], $range['date_to']);
+
+    return rest_ensure_response($summary);
+}
+
+/**
+ * GET /tutorials/{id}/analytics/trend
+ *
+ * @param WP_REST_Request $request
+ * @return WP_REST_Response|WP_Error
+ */
+function gots_rest_get_analytics_trend($request) {
+    $id = absint($request->get_param('id'));
+
+    $post = get_post($id);
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error('tutorial_not_found', __('Tutorial not found.', 'guide-on-the-side'), array('status' => 404));
+    }
+
+    $range = gots_parse_date_range_params($request);
+    $trend = gots_get_analytics_trend($id, $range['date_from'], $range['date_to']);
+
+    return rest_ensure_response($trend);
+}
+
+/**
+ * GET /tutorials/{id}/analytics/slides
+ *
+ * @param WP_REST_Request $request
+ * @return WP_REST_Response|WP_Error
+ */
+function gots_rest_get_analytics_slides($request) {
+    $id = absint($request->get_param('id'));
+
+    $post = get_post($id);
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error('tutorial_not_found', __('Tutorial not found.', 'guide-on-the-side'), array('status' => 404));
+    }
+
+    $range  = gots_parse_date_range_params($request);
+    $slides = gots_get_slide_performance($id, $range['date_from'], $range['date_to']);
+
+    return rest_ensure_response($slides);
 }

@@ -246,6 +246,8 @@ function gots_render_playback_page($tutorial_id, $post, $is_preview = false) {
             'homeUrl'    => esc_url_raw(home_url('/')),
             'siteName'   => get_bloginfo('name'),
             'isPreview'  => $is_preview,
+            // HMAC token scoped to this tutorial — validates that analytics events originate from a real playback page
+            'analyticsToken' => hash_hmac('sha256', 'gots_analytics_' . $tutorial_id, wp_salt('auth')),
         );
         
         // if preview mode, include the WP nonce so the student app can authenticate

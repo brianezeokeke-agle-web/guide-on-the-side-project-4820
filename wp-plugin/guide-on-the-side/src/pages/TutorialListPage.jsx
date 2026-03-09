@@ -75,12 +75,12 @@ export default function TutorialListPage() {
       );
     }
 
-    // Safe date parser: returns a numeric timestamp, falls back to 0 for
-    // invalid / missing dates so they sort to the end predictably.
-    const safeTime = (v) => {
-      if (!v) return 0;
+    // Safe date parser: returns a numeric timestamp for sorting.
+    // Ascending sorts use Infinity as fallback so missing dates land at the end.
+    const safeTime = (v, fallback = 0) => {
+      if (!v) return fallback;
       const t = new Date(v).getTime();
-      return Number.isNaN(t) ? 0 : t;
+      return Number.isNaN(t) ? fallback : t;
     };
 
     // Apply sorting
@@ -93,11 +93,11 @@ export default function TutorialListPage() {
         case "newest":
           return safeTime(b.createdAt) - safeTime(a.createdAt);
         case "oldest":
-          return safeTime(a.createdAt) - safeTime(b.createdAt);
+          return safeTime(a.createdAt, Infinity) - safeTime(b.createdAt, Infinity);
         case "modified-newest":
           return safeTime(b.updatedAt) - safeTime(a.updatedAt);
         case "modified-oldest":
-          return safeTime(a.updatedAt) - safeTime(b.updatedAt);
+          return safeTime(a.updatedAt, Infinity) - safeTime(b.updatedAt, Infinity);
         default:
           return 0;
       }
@@ -157,8 +157,14 @@ export default function TutorialListPage() {
         await updateTutorial(tutorialId, { archived: true });
       }
       
-      // remove from local state
-      setTutorials((prev) => prev.filter((t) => t.tutorialId !== tutorialId));
+      // Update local state so the tutorial moves to the "Archived" filter without a refetch
+      setTutorials((prev) =>
+        prev.map((t) =>
+          t.tutorialId === tutorialId
+            ? { ...t, archived: true, status: 'draft' }
+            : t
+        )
+      );
     } catch (err) {
       console.error("Failed to archive tutorial", err);
     }

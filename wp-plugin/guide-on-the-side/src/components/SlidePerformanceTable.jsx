@@ -83,9 +83,15 @@ export default function SlidePerformanceTable({ data }) {
             <tr>
               <th style={{ ...styles.th, width: "50px" }}>#</th>
               <th style={styles.th}>Slide</th>
-              <th style={{ ...styles.th, textAlign: "right" }}>Views</th>
-              <th style={{ ...styles.th, textAlign: "right" }}>Proceeds</th>
-              <th style={{ ...styles.th, textAlign: "right" }}>Conversion</th>
+              <th style={{ ...styles.th, textAlign: "right" }}>
+                Views <span style={styles.infoIcon} title="How many times a slide was viewed">ⓘ</span>
+              </th>
+              <th style={{ ...styles.th, textAlign: "right" }}>
+                Proceeds <span style={styles.infoIcon} title="How many times a student clicked Next on this slide">ⓘ</span>
+              </th>
+              <th style={{ ...styles.th, textAlign: "right" }}>
+                Conversion <span style={styles.infoIcon} title="Percentage of viewers who proceeded to the next slide">ⓘ</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -190,6 +196,12 @@ const styles = {
     borderRadius: "9999px",
     fontSize: "12px",
     fontWeight: "600",
+  },
+  infoIcon: {
+    cursor: "help",
+    fontSize: "13px",
+    color: "#9ca3af",
+    marginLeft: "4px",
   },
   empty: {
     color: "#9ca3af",

@@ -623,6 +623,7 @@ function gots_rest_record_analytics_event($request) {
     $tutorial_id = isset($params['tutorialId']) ? absint($params['tutorialId']) : 0;
     $event_type  = isset($params['eventType']) ? sanitize_text_field($params['eventType']) : '';
     $slide_id    = isset($params['slideId']) ? sanitize_text_field($params['slideId']) : null;
+    $token       = isset($params['token']) ? sanitize_text_field($params['token']) : '';
 
     if (!$tutorial_id || !$event_type) {
         return new WP_Error(
@@ -632,7 +633,30 @@ function gots_rest_record_analytics_event($request) {
         );
     }
 
-    // verify that the tutorial exists
+    // Verify the HMAC token matches — rejects requests not originating from a real playback page
+    $expected_token = hash_hmac('sha256', 'gots_analytics_' . $tutorial_id, wp_salt('auth'));
+    if (!hash_equals($expected_token, $token)) {
+        return new WP_Error(
+            'invalid_token',
+            __('Invalid analytics token.', 'guide-on-the-side'),
+            array('status' => 403)
+        );
+    }
+
+    // Simple rate limit — max 60 events per IP per minute via a transient
+    $ip_hash    = md5($_SERVER['REMOTE_ADDR'] ?? 'unknown');
+    $rate_key   = 'gots_rate_' . $ip_hash;
+    $rate_count = (int) get_transient($rate_key);
+    if ($rate_count >= 60) {
+        return new WP_Error(
+            'rate_limited',
+            __('Too many requests. Please slow down.', 'guide-on-the-side'),
+            array('status' => 429)
+        );
+    }
+    set_transient($rate_key, $rate_count + 1, 60);
+
+    // Verify that the tutorial exists
     $post = get_post($tutorial_id);
     if (!$post || $post->post_type !== 'gots_tutorial') {
         return new WP_Error(
@@ -671,6 +695,13 @@ function gots_parse_date_range_params($request) {
     }
     if ($date_to && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_to)) {
         $date_to = null;
+    }
+
+    // normalize range: if both dates are present and out of order, swap them
+    if ($date_from && $date_to && $date_from > $date_to) {
+        $tmp       = $date_from;
+        $date_from = $date_to;
+        $date_to   = $tmp;
     }
 
     return array('date_from' => $date_from, 'date_to' => $date_to);

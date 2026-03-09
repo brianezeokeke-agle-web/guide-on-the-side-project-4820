@@ -56,6 +56,8 @@ export default function StudentApp() {
   //analytics tracking!!
   // Track which slideIndex we last fired slide_viewed for, to prevent duplicate fires from re-renders at the same index
   const lastViewedSlideIndex = useRef(-1);
+  // Tracks whether tutorial_started has fired this session — reset on completion so restarts count
+  const hasStarted = useRef(false);
 
   // get the current slide data early so analytics effects can reference it
   const slides = tutorial?.slides || [];
@@ -73,8 +75,9 @@ export default function StudentApp() {
 
     recordAnalyticsEvent(config.tutorialId, 'slide_viewed', slide.slideId);
 
-    //classic case of piggybacking. the first slide must mean the tutorial has begun so we record as such
-    if (currentSlideIndex === 0) {
+    // Fire tutorial_started only once per session (resets after completion so restarts count)
+    if (currentSlideIndex === 0 && !hasStarted.current) {
+      hasStarted.current = true;
       recordAnalyticsEvent(config.tutorialId, 'tutorial_started');
     }
   }, [currentSlideIndex, tutorial, config.tutorialId, config.isPreview]);
@@ -230,6 +233,9 @@ export default function StudentApp() {
       // some more piggybacking. the last slide indicates that the tutorial is complete
       if (isLastSlide) {
         recordAnalyticsEvent(config.tutorialId, 'tutorial_completed');
+        // Reset so a restart fires a new tutorial_started
+        hasStarted.current = false;
+        lastViewedSlideIndex.current = -1;
       }
     }
 

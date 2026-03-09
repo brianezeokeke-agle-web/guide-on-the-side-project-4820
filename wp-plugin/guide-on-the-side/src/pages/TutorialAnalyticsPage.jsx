@@ -131,7 +131,6 @@ export default function TutorialAnalyticsPage() {
         {/* Error state */}
         {error && (
           <div style={styles.errorBanner}>
-            <span>⚠️ {error}</span>
             <button
               style={styles.retryButton}
               onClick={() => setDateRange({ ...dateRange })}

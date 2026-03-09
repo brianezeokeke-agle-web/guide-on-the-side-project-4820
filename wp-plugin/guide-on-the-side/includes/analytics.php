@@ -22,10 +22,11 @@ function gots_create_analytics_table() {
         id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
         tutorial_id BIGINT(20) UNSIGNED NOT NULL,
         event_type VARCHAR(50) NOT NULL,
-        slide_id VARCHAR(100) DEFAULT NULL,
+        slide_id VARCHAR(100) NOT NULL DEFAULT '',
         event_date DATE NOT NULL,
         event_count INT(11) NOT NULL DEFAULT 1,
         PRIMARY KEY  (id),
+        UNIQUE KEY uq_event (tutorial_id, event_type, slide_id, event_date),
         KEY idx_tutorial_event_date (tutorial_id, event_type, event_date),
         KEY idx_tutorial_slide (tutorial_id, slide_id, event_type, event_date)
     ) $charset_collate;";
@@ -33,15 +34,14 @@ function gots_create_analytics_table() {
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';
     dbDelta($sql);
 
-    // store the analytics table version so we can upgrade later
-    update_option('gots_analytics_db_version', '1.0.0');
+    update_option('gots_analytics_db_version', '1.1.0');
 }
 
 
  //Check if the analytics table needs to be created/upgraded
 function gots_maybe_create_analytics_table() {
     $installed_version = get_option('gots_analytics_db_version', '0');
-    if (version_compare($installed_version, '1.0.0', '<')) {
+    if (version_compare($installed_version, '1.1.0', '<')) {
         gots_create_analytics_table();
     }
 }
@@ -71,47 +71,20 @@ function gots_record_analytics_event($tutorial_id, $event_type, $slide_id = null
         $date = current_time('Y-m-d');
     }
 
-    // sanitize slide_id
-    $slide_id = $slide_id ? sanitize_text_field($slide_id) : null;
+    // Use empty string instead of NULL so the UNIQUE index works correctly
+    $slide_id = $slide_id ? sanitize_text_field($slide_id) : '';
 
-    // Try to find an existing row for this day/event/slide combination
-    if ($slide_id !== null) {
-        $existing_id = $wpdb->get_var($wpdb->prepare(
-            "SELECT id FROM $table_name WHERE tutorial_id = %d AND event_type = %s AND slide_id = %s AND event_date = %s LIMIT 1",
-            $tutorial_id,
-            $event_type,
-            $slide_id,
-            $date
-        ));
-    } else {
-        $existing_id = $wpdb->get_var($wpdb->prepare(
-            "SELECT id FROM $table_name WHERE tutorial_id = %d AND event_type = %s AND slide_id IS NULL AND event_date = %s LIMIT 1",
-            $tutorial_id,
-            $event_type,
-            $date
-        ));
-    }
-
-    if ($existing_id) {
-        // increment existing counter
-        $wpdb->query($wpdb->prepare(
-            "UPDATE $table_name SET event_count = event_count + 1 WHERE id = %d",
-            $existing_id
-        ));
-    } else {
-        // insert new row
-        $wpdb->insert(
-            $table_name,
-            array(
-                'tutorial_id' => $tutorial_id,
-                'event_type'  => $event_type,
-                'slide_id'    => $slide_id,
-                'event_date'  => $date,
-                'event_count' => 1,
-            ),
-            array('%d', '%s', '%s', '%s', '%d')
-        );
-    }
+    // Atomic upsert — the UNIQUE KEY (tutorial_id, event_type, slide_id, event_date)
+    // ensures no duplicate rows, even under concurrent requests.
+    $wpdb->query($wpdb->prepare(
+        "INSERT INTO $table_name (tutorial_id, event_type, slide_id, event_date, event_count)
+         VALUES (%d, %s, %s, %s, 1)
+         ON DUPLICATE KEY UPDATE event_count = event_count + 1",
+        $tutorial_id,
+        $event_type,
+        $slide_id,
+        $date
+    ));
 
     return true;
 }
@@ -123,7 +96,7 @@ function gots_get_analytics_summary($tutorial_id, $date_from = null, $date_to = 
     $table_name  = $wpdb->prefix . 'gots_analytics';
     $tutorial_id = absint($tutorial_id);
 
-    $where = $wpdb->prepare("tutorial_id = %d AND slide_id IS NULL", $tutorial_id);
+    $where = $wpdb->prepare("tutorial_id = %d AND slide_id = ''", $tutorial_id);
     if ($date_from) {
         $where .= $wpdb->prepare(" AND event_date >= %s", $date_from);
     }
@@ -163,7 +136,7 @@ function gots_get_analytics_trend($tutorial_id, $date_from = null, $date_to = nu
     $tutorial_id = absint($tutorial_id);
 
     $where = $wpdb->prepare(
-        "tutorial_id = %d AND slide_id IS NULL AND event_type IN ('tutorial_started', 'tutorial_completed')",
+        "tutorial_id = %d AND slide_id = '' AND event_type IN ('tutorial_started', 'tutorial_completed')",
         $tutorial_id
     );
     if ($date_from) {
@@ -221,7 +194,7 @@ function gots_get_slide_performance($tutorial_id, $date_from = null, $date_to = 
     $tutorial_id = absint($tutorial_id);
 
     $where = $wpdb->prepare(
-        "tutorial_id = %d AND slide_id IS NOT NULL AND event_type IN ('slide_viewed', 'slide_proceeded')",
+        "tutorial_id = %d AND slide_id != '' AND event_type IN ('slide_viewed', 'slide_proceeded')",
         $tutorial_id
     );
     if ($date_from) {

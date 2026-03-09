@@ -43,11 +43,18 @@ export async function recordAnalyticsEvent(tutorialId, eventType, slideId = null
   try {
     const body = { tutorialId: String(tutorialId), eventType };
     if (slideId) body.slideId = slideId;
+    // Include the HMAC token so the server can verify this came from a real playback page
+    const studentConfig = typeof window !== 'undefined' && window.gotsStudentConfig;
+    if (studentConfig?.analyticsToken) body.token = studentConfig.analyticsToken;
 
-    await apiRequest('/analytics/event', {
+    const response = await apiRequest('/analytics/event', {
       method: 'POST',
       body: JSON.stringify(body),
     });
+    // Log non-OK responses so silently dropped events are visible in the console
+    if (!response.ok) {
+      throw new Error(`Failed to record analytics event: ${response.status} ${response.statusText}`);
+    }
   } catch (err) {
     console.warn('[GOTS Analytics] Failed to record event:', err);
   }
@@ -56,8 +63,8 @@ export async function recordAnalyticsEvent(tutorialId, eventType, slideId = null
 // Build a query-string from date range params.
 function dateParams(dateFrom, dateTo) {
   const parts = [];
-  if (dateFrom) parts.push(`dateFrom=${dateFrom}`);
-  if (dateTo) parts.push(`dateTo=${dateTo}`);
+  if (dateFrom) parts.push(`dateFrom=${encodeURIComponent(dateFrom)}`);
+  if (dateTo) parts.push(`dateTo=${encodeURIComponent(dateTo)}`);
   return parts.length ? `?${parts.join('&')}` : '';
 }
 

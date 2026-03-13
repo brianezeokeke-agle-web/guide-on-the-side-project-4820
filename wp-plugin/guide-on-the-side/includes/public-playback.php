@@ -240,12 +240,18 @@ function gots_render_playback_page($tutorial_id, $post, $is_preview = false) {
         
         <?php
         // output configuration for the student app
+        $user_name = 'Guest';
+        if (is_user_logged_in()) {
+            $user = wp_get_current_user();
+            $user_name = !empty($user->display_name) ? $user->display_name : $user->user_login;
+        }
         $config = array(
             'tutorialId' => $tutorial_id,
             'restUrl'    => esc_url_raw(rest_url('gots/v1')),
             'homeUrl'    => esc_url_raw(home_url('/')),
             'siteName'   => get_bloginfo('name'),
             'isPreview'  => $is_preview,
+            'userName'   => $user_name,
         );
         
         // if preview mode, include the WP nonce so the student app can authenticate

@@ -12,6 +12,7 @@ function getConfig() {
     restUrl: "/wp-json/gots/v1",
     homeUrl: "/",
     siteName: "Site",
+    userName: "Guest",
   };
 }
 
@@ -49,6 +50,8 @@ export default function StudentApp() {
   const [answers, setAnswers] = useState({});
   const [feedback, setFeedback] = useState({});
   const [completed, setCompleted] = useState(false);
+  const [certificateLoading, setCertificateLoading] = useState(false);
+  const [certificateError, setCertificateError] = useState(null);
 
   const config = getConfig();
 
@@ -160,6 +163,55 @@ export default function StudentApp() {
     }));
   };
 
+  // Generate certificate: call REST API, receive PDF blob, trigger download
+  const generateCertificate = async () => {
+    if (!tutorial?.title) return;
+    setCertificateError(null);
+    setCertificateLoading(true);
+    const userName = config.userName || "Guest";
+    const courseName = tutorial.title;
+    const completionDate = new Date().toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+    const url = `${config.restUrl}/generate-certificate`;
+    const headers = {
+      "Content-Type": "application/json",
+    };
+    if (config.nonce) {
+      headers["X-WP-Nonce"] = config.nonce;
+    }
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          userName,
+          courseName,
+          completionDate,
+        }),
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.message || "Failed to generate certificate");
+      }
+      const blob = await response.blob();
+      const slug = courseName.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "course";
+      const datePart = new Date().toISOString().slice(0, 10);
+      const filename = `certificate-${slug}-${datePart}.pdf`;
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } catch (err) {
+      setCertificateError(err.message || "Could not generate certificate.");
+    } finally {
+      setCertificateLoading(false);
+    }
+  };
+
   // Handle navigation
   const handlePrevious = () => {
     if (!isFirstSlide) {
@@ -248,6 +300,16 @@ export default function StudentApp() {
           >
             Restart Tutorial
           </button>
+          <button
+            onClick={generateCertificate}
+            style={styles.certificateButton}
+            disabled={certificateLoading}
+          >
+            {certificateLoading ? "Generating..." : "Certificate of Completion"}
+          </button>
+          {certificateError && (
+            <p style={styles.certificateError}>{certificateError}</p>
+          )}
           <a href={config.homeUrl} style={styles.homeLink}>
             Return to Home
           </a>
@@ -626,6 +688,23 @@ const styles = {
     border: "none",
     borderRadius: "8px",
     cursor: "pointer",
+  },
+  certificateButton: {
+    padding: "12px 24px",
+    fontSize: "16px",
+    fontWeight: "600",
+    backgroundColor: "white",
+    color: "#374151",
+    border: "1px solid #d1d5db",
+    borderRadius: "8px",
+    cursor: "pointer",
+  },
+  certificateError: {
+    width: "100%",
+    marginTop: "8px",
+    marginBottom: "0",
+    fontSize: "14px",
+    color: "#b91c1c",
   },
   homeLink: {
     padding: "12px 24px",

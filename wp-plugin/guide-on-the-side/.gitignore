@@ -1,5 +1,8 @@
 # very annoying node modules
 node_modules/
+
+# Composer dependencies (install with: composer install)
+vendor/
 # others - no need to track builds as they are generated everytime we run npm run build
 dist/
 build/

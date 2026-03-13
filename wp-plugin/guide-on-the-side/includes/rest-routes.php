@@ -86,6 +86,39 @@ function gots_register_rest_routes() {
             ),
         ),
     ));
+
+    // POST /generate-certificate - generate and return a PDF certificate
+    register_rest_route($namespace, '/generate-certificate', array(
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'gots_rest_generate_certificate',
+        'permission_callback' => 'gots_rest_permissions_check_public',
+        'args'                => array(
+            'userName'        => array(
+                'required'          => true,
+                'type'              => 'string',
+                'sanitize_callback'  => 'sanitize_text_field',
+                'validate_callback' => function($param) {
+                    return is_string($param) && strlen(trim($param)) > 0;
+                },
+            ),
+            'courseName'      => array(
+                'required'          => true,
+                'type'              => 'string',
+                'sanitize_callback'  => 'sanitize_text_field',
+                'validate_callback' => function($param) {
+                    return is_string($param) && strlen(trim($param)) > 0;
+                },
+            ),
+            'completionDate'  => array(
+                'required'          => true,
+                'type'              => 'string',
+                'sanitize_callback'  => 'sanitize_text_field',
+                'validate_callback' => function($param) {
+                    return is_string($param) && strlen(trim($param)) > 0;
+                },
+            ),
+        ),
+    ));
 }
 
 /**
@@ -282,6 +315,31 @@ function gots_rest_get_tutorial_public($request) {
     
     // return the tutorial data for student playback
     return rest_ensure_response(gots_format_tutorial_response($post));
+}
+
+/**
+ * generate certificate PDF and send as response
+ *
+ * @param WP_REST_Request $request Request object with userName, courseName, completionDate
+ * @return void Sends PDF and exits
+ */
+function gots_rest_generate_certificate($request) {
+    $user_name       = $request->get_param('userName');
+    $course_name     = $request->get_param('courseName');
+    $completion_date = $request->get_param('completionDate');
+
+    $pdf_content = gots_generate_certificate_pdf($user_name, $course_name, $completion_date);
+
+    if (is_wp_error($pdf_content)) {
+        return $pdf_content;
+    }
+
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: inline; filename="certificate.pdf"');
+    header('Cache-Control: private, max-age=0, must-revalidate');
+    header('Pragma: public');
+    echo $pdf_content;
+    exit;
 }
 
 /**

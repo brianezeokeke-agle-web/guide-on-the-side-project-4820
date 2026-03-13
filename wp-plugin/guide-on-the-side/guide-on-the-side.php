@@ -23,12 +23,18 @@ define('GOTS_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('GOTS_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('GOTS_PLUGIN_BASENAME', plugin_basename(__FILE__));
 
+// Composer autoload (for Dompdf and dependencies)
+if (file_exists(GOTS_PLUGIN_DIR . 'vendor/autoload.php')) {
+    require_once GOTS_PLUGIN_DIR . 'vendor/autoload.php';
+}
+
 // include the required files
 require_once GOTS_PLUGIN_DIR . 'includes/util.php';
 require_once GOTS_PLUGIN_DIR . 'includes/post-types.php';
 require_once GOTS_PLUGIN_DIR . 'includes/rest-routes.php';
 require_once GOTS_PLUGIN_DIR . 'includes/enqueue.php';
 require_once GOTS_PLUGIN_DIR . 'includes/public-playback.php';
+require_once GOTS_PLUGIN_DIR . 'includes/certificate-pdf.php';
 
 /**
  * the plugin activation hook

@@ -73,6 +73,7 @@ function gots_is_pane_empty($pane) {
 
 // Returns true when at least one slide has an empty left or right pane.
 function gots_has_empty_slides($slides) {
+    if (empty($slides)) return true;
     foreach ($slides as $slide) {
         $left  = isset($slide['leftPane'])  ? $slide['leftPane']  : null;
         $right = isset($slide['rightPane']) ? $slide['rightPane'] : null;

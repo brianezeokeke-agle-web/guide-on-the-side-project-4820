@@ -409,6 +409,20 @@ function gots_rest_update_tutorial($request) {
         );
     }
     
+    // published tutorials are locked — only archiving is allowed
+    if ($post->post_status === 'publish') {
+        $allowed_keys = array('archived');
+        $submitted_keys = array_keys($params);
+        $disallowed = array_diff($submitted_keys, $allowed_keys);
+        if (!empty($disallowed)) {
+            return new WP_Error(
+                'tutorial_locked',
+                __('Published tutorials cannot be modified. Only archiving is allowed.', 'guide-on-the-side'),
+                array('status' => 403)
+            );
+        }
+    }
+    
     // validate and sanitize input
     $sanitized = gots_sanitize_tutorial_data($params, false);
     

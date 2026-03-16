@@ -1,41 +1,46 @@
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import DOMPurify from "dompurify";
 import { getTutorial, updateTutorial } from "../services/tutorialApi";
 import { selectMedia, isMediaLibraryAvailable } from "../services/mediaLibrary";
 
-// WordPress TinyMCE Editor Component
+// Read-only HTML preview (no hooks, no TinyMCE)
+function WysiwygReadOnly({ value }) {
+  const sanitizedValue = DOMPurify.sanitize(value || '<em>No content</em>');
+  return (
+    <div style={styles.wysiwygContainer}>
+      <div
+        style={{
+          width: '100%',
+          minHeight: '120px',
+          padding: '12px',
+          fontSize: '14px',
+          lineHeight: '1.6',
+          color: '#6b7280',
+          backgroundColor: '#f3f4f6',
+          border: '1px solid #d1d5db',
+          borderRadius: '4px',
+          boxSizing: 'border-box',
+          overflow: 'auto',
+        }}
+        dangerouslySetInnerHTML={{ __html: sanitizedValue }}
+      />
+    </div>
+  );
+}
+
+// wp tinymce editor component
 function WysiwygEditor({ value, onChange, onBlur, editorId, readOnly = false }) {
+  // delegate to a separate component 
+  if (readOnly) return <WysiwygReadOnly value={value} />;
+
   const containerRef = useRef(null);
   const editorIdRef = useRef(editorId || `gots-editor-${Math.random().toString(36).substr(2, 9)}`);
   const initializedRef = useRef(false);
   const lastValueRef = useRef(value);
   const isInternalChangeRef = useRef(false);
 
-  // when readOnly is true, render static HTML instead of initializing TinyMCE
-  if (readOnly) {
-    return (
-      <div ref={containerRef} style={styles.wysiwygContainer}>
-        <div
-          style={{
-            width: '100%',
-            minHeight: '120px',
-            padding: '12px',
-            fontSize: '14px',
-            lineHeight: '1.6',
-            color: '#6b7280',
-            backgroundColor: '#f3f4f6',
-            border: '1px solid #d1d5db',
-            borderRadius: '4px',
-            boxSizing: 'border-box',
-            overflow: 'auto',
-          }}
-          dangerouslySetInnerHTML={{ __html: value || '<em>No content</em>' }}
-        />
-      </div>
-    );
-  }
-
-  // Initialize TinyMCE on mount
+  // Initialize tinymce on mount
   useEffect(() => {
     const id = editorIdRef.current;
     
@@ -57,13 +62,13 @@ function WysiwygEditor({ value, onChange, onBlur, editorId, readOnly = false }) 
         tinymce: {
           wpautop: true,
           plugins: 'charmap colorpicker hr lists paste tabfocus textcolor fullscreen wordpress wpautoresize wpeditimage wpemoji wpgallery wplink wptextpattern',
-          toolbar1: readOnly ? false : 'undo redo | formatselect bold italic bullist numlist blockquote alignleft aligncenter alignright link unlink',
+          toolbar1: 'undo redo | formatselect bold italic bullist numlist blockquote alignleft aligncenter alignright link unlink',
           toolbar2: '',
           height: 250,
           menubar: false,
           statusbar: false,
           resize: false,
-          readonly: readOnly ? 1 : 0,
+          readonly: 0,
           setup: (editor) => {
             // Handler to sync content changes
             const syncContent = () => {
@@ -143,11 +148,9 @@ function WysiwygEditor({ value, onChange, onBlur, editorId, readOnly = false }) 
       <textarea
         id={editorIdRef.current}
         defaultValue={value || ''}
-        onChange={readOnly ? undefined : handleTextareaChange}
-        onBlur={readOnly ? undefined : onBlur}
-        readOnly={readOnly}
-        disabled={readOnly}
-        style={{ width: '100%', minHeight: '250px', ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
+        onChange={handleTextareaChange}
+        onBlur={onBlur}
+        style={{ width: '100%', minHeight: '250px' }}
       />
     </div>
   );

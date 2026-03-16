@@ -7,7 +7,6 @@ export function isPaneEmpty(pane) {
     case 'text':
       return !pane.data?.content || !pane.data.content.replace(/<[^>]*>/g, '').trim();
     case 'question':
-      return !pane.data?.questionTitle?.trim();
     case 'textQuestion':
       return !pane.data?.questionTitle?.trim();
     case 'embed':

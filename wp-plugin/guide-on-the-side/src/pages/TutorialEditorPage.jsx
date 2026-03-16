@@ -30,10 +30,7 @@ function WysiwygReadOnly({ value }) {
 }
 
 // wp tinymce editor component
-function WysiwygEditor({ value, onChange, onBlur, editorId, readOnly = false }) {
-  // delegate to a separate component 
-  if (readOnly) return <WysiwygReadOnly value={value} />;
-
+function WysiwygEditor({ value, onChange, onBlur, editorId }) {
   const containerRef = useRef(null);
   const editorIdRef = useRef(editorId || `gots-editor-${Math.random().toString(36).substr(2, 9)}`);
   const initializedRef = useRef(false);
@@ -316,13 +313,16 @@ function MCQEditor({ data, onChange, onBlur, editorId, readOnly = false }) {
       {/* description with rich text editor */}
       <div style={styles.mcqField}>
         <label style={styles.mcqLabel}>Description (optional)</label>
-        <WysiwygEditor
-          editorId={`${editorId}-description`}
-          value={questionData.description || ""}
-          onChange={readOnly ? () => {} : (content) => updateField("description", content)}
-          onBlur={readOnly ? undefined : guardedBlur}
-          readOnly={readOnly}
-        />
+        {readOnly ? (
+          <WysiwygReadOnly value={questionData.description || ""} />
+        ) : (
+          <WysiwygEditor
+            editorId={`${editorId}-description`}
+            value={questionData.description || ""}
+            onChange={(content) => updateField("description", content)}
+            onBlur={guardedBlur}
+          />
+        )}
       </div>
 
       {/* options for validation */}
@@ -525,13 +525,16 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId, readOnly = false
       {/* description with rich text editor */}
       <div style={styles.mcqField}>
         <label style={styles.mcqLabel}>Description (optional)</label>
-        <WysiwygEditor
-          editorId={`${editorId}-description`}
-          value={questionData.description || ""}
-          onChange={readOnly ? () => {} : (content) => updateField("description", content)}
-          onBlur={readOnly ? undefined : guardedBlur}
-          readOnly={readOnly}
-        />
+        {readOnly ? (
+          <WysiwygReadOnly value={questionData.description || ""} />
+        ) : (
+          <WysiwygEditor
+            editorId={`${editorId}-description`}
+            value={questionData.description || ""}
+            onChange={(content) => updateField("description", content)}
+            onBlur={guardedBlur}
+          />
+        )}
       </div>
 
       {/* correct answer */}
@@ -1293,16 +1296,19 @@ export default function TutorialEditorPage() {
         )}
 
         {pane?.type === "text" && (
-          <WysiwygEditor
-            key={`${slideId}-${paneKey}`}
-            editorId={`gots-wysiwyg-${slideId}-${paneKey}`}
-            value={pane.data?.content || ""}
-            onChange={(content) =>
-              handlePaneContentChange(slideId, paneKey, pane, { content })
-            }
-            onBlur={() => handlePaneContentBlur(slideId)}
-            readOnly={isPublished}
-          />
+          isPublished ? (
+            <WysiwygReadOnly key={`${slideId}-${paneKey}`} value={pane.data?.content || ""} />
+          ) : (
+            <WysiwygEditor
+              key={`${slideId}-${paneKey}`}
+              editorId={`gots-wysiwyg-${slideId}-${paneKey}`}
+              value={pane.data?.content || ""}
+              onChange={(content) =>
+                handlePaneContentChange(slideId, paneKey, pane, { content })
+              }
+              onBlur={() => handlePaneContentBlur(slideId)}
+            />
+          )
         )}
 
         {pane?.type === "question" && (

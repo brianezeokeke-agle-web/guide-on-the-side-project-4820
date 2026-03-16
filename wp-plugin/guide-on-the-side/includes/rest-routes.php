@@ -430,6 +430,19 @@ function gots_rest_update_tutorial($request) {
         return $sanitized;
     }
     
+    // block publishing if any slide has empty content panes
+    if (isset($sanitized['status']) && $sanitized['status'] === 'publish') {
+        $slides_json = get_post_meta($id, '_gots_slides', true);
+        $slides = !empty($slides_json) ? json_decode($slides_json, true) : array();
+        if (!is_array($slides) || empty($slides) || gots_has_empty_slides($slides)) {
+            return new WP_Error(
+                'empty_slides',
+                __('Cannot publish: one or more slides have empty content panes. Please fill in all slide content before publishing.', 'guide-on-the-side'),
+                array('status' => 422)
+            );
+        }
+    }
+    
     // prepare post update data
     $update_data = array(
         'ID' => $id,

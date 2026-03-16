@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import ShareModal from "../components/ShareModal";
 import { listTutorials, updateTutorial, deleteTutorial } from "../services/tutorialApi";
+import { hasEmptySlides } from "../services/slideValidation";
 
 //helper function to get relative time for last edited display
 function getRelativeTime(dateString) {
@@ -147,13 +148,7 @@ export default function TutorialListPage() {
     setOpenDropdownId(null);
     
     try {
-      // If published, unpublish first then archive
-      const tut = tutorials.find((t) => t.tutorialId === tutorialId);
-      const payload = tut && tut.status === 'published'
-        ? { status: 'draft', archived: true }
-        : { archived: true };
-
-      const updated = await updateTutorial(tutorialId, payload);
+      const updated = await updateTutorial(tutorialId, { archived: true });
 
       // Update local state from server response to stay in sync
       setTutorials((prev) =>
@@ -184,27 +179,22 @@ export default function TutorialListPage() {
     }
   };
 
-  const handleUnpublish = async (e, tutorialId) => {
-    e.stopPropagation();
-    setOpenDropdownId(null);
-    
-    try {
-      const updated = await updateTutorial(tutorialId, { status: 'draft' });
-      // Update local state from server response
-      setTutorials((prev) =>
-        prev.map((t) =>
-          t.tutorialId === tutorialId ? { ...t, ...updated } : t
-        )
-      );
-    } catch (err) {
-      console.error("Failed to unpublish tutorial", err);
-      alert("Failed to unpublish tutorial. Please try again.");
-    }
-  };
-
   const handlePublish = async (e, tutorialId) => {
     e.stopPropagation();
     setOpenDropdownId(null);
+
+    // Block publishing if any slide has empty content panes
+    const tut = tutorials.find((t) => t.tutorialId === tutorialId);
+    if (hasEmptySlides(tut)) {
+      alert('Could not publish tutorial as it contains empty slides. Please fill in all slide content before publishing.');
+      return;
+    }
+
+    // Publishing is permanent — warn the author
+    const confirmed = window.confirm(
+      'Publishing is permanent and cannot be undone. Once published, this tutorial will be live and accessible to students.\n\nDo you want to continue?'
+    );
+    if (!confirmed) return;
     
     try {
       const updated = await updateTutorial(tutorialId, { status: "published" });
@@ -401,7 +391,7 @@ export default function TutorialListPage() {
                           style={styles.dropdownItem}
                           onClick={(e) => handleEdit(e, tut.tutorialId)}
                         >
-                          Edit
+                          {tut.status === 'published' ? 'View' : 'Edit'}
                         </button>
                         {tut.archived ? (
                           <button
@@ -424,14 +414,6 @@ export default function TutorialListPage() {
                                 onClick={(e) => handlePublish(e, tut.tutorialId)}
                               >
                                 Publish
-                              </button>
-                            )}
-                            {tut.status === 'published' && (
-                              <button
-                                style={styles.dropdownItem}
-                                onClick={(e) => handleUnpublish(e, tut.tutorialId)}
-                              >
-                                Unpublish
                               </button>
                             )}
                           </>

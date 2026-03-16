@@ -1,9 +1,35 @@
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import DOMPurify from "dompurify";
 import { getTutorial, updateTutorial } from "../services/tutorialApi";
 import { selectMedia, isMediaLibraryAvailable } from "../services/mediaLibrary";
 
-// WordPress TinyMCE Editor Component
+// Read-only HTML preview (no hooks, no TinyMCE)
+function WysiwygReadOnly({ value }) {
+  const sanitizedValue = DOMPurify.sanitize(value || '<em>No content</em>');
+  return (
+    <div style={styles.wysiwygContainer}>
+      <div
+        style={{
+          width: '100%',
+          minHeight: '120px',
+          padding: '12px',
+          fontSize: '14px',
+          lineHeight: '1.6',
+          color: '#6b7280',
+          backgroundColor: '#f3f4f6',
+          border: '1px solid #d1d5db',
+          borderRadius: '4px',
+          boxSizing: 'border-box',
+          overflow: 'auto',
+        }}
+        dangerouslySetInnerHTML={{ __html: sanitizedValue }}
+      />
+    </div>
+  );
+}
+
+// wp tinymce editor component
 function WysiwygEditor({ value, onChange, onBlur, editorId }) {
   const containerRef = useRef(null);
   const editorIdRef = useRef(editorId || `gots-editor-${Math.random().toString(36).substr(2, 9)}`);
@@ -11,7 +37,7 @@ function WysiwygEditor({ value, onChange, onBlur, editorId }) {
   const lastValueRef = useRef(value);
   const isInternalChangeRef = useRef(false);
 
-  // Initialize TinyMCE on mount
+  // Initialize tinymce on mount
   useEffect(() => {
     const id = editorIdRef.current;
     
@@ -39,6 +65,7 @@ function WysiwygEditor({ value, onChange, onBlur, editorId }) {
           menubar: false,
           statusbar: false,
           resize: false,
+          readonly: 0,
           setup: (editor) => {
             // Handler to sync content changes
             const syncContent = () => {
@@ -127,7 +154,7 @@ function WysiwygEditor({ value, onChange, onBlur, editorId }) {
 }
 
 //editor component for multiple choice question
-function MCQEditor({ data, onChange, onBlur, editorId }) {
+function MCQEditor({ data, onChange, onBlur, editorId, readOnly = false }) {
   const [errors, setErrors] = useState({});
   
   // Default data structure
@@ -271,10 +298,11 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
         <label style={styles.mcqLabel}>Question Title *</label>
         <input
           type="text"
-          style={styles.mcqInput}
+          style={{ ...styles.mcqInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
           value={questionData.questionTitle || ""}
-          onChange={(e) => updateField("questionTitle", e.target.value)}
-          onBlur={guardedBlur}
+          onChange={readOnly ? undefined : (e) => updateField("questionTitle", e.target.value)}
+          onBlur={readOnly ? undefined : guardedBlur}
+          readOnly={readOnly}
           placeholder="Enter your question..."
         />
         {errors.questionTitle && (
@@ -285,12 +313,16 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
       {/* description with rich text editor */}
       <div style={styles.mcqField}>
         <label style={styles.mcqLabel}>Description (optional)</label>
-        <WysiwygEditor
-          editorId={`${editorId}-description`}
-          value={questionData.description || ""}
-          onChange={(content) => updateField("description", content)}
-          onBlur={guardedBlur}
-        />
+        {readOnly ? (
+          <WysiwygReadOnly value={questionData.description || ""} />
+        ) : (
+          <WysiwygEditor
+            editorId={`${editorId}-description`}
+            value={questionData.description || ""}
+            onChange={(content) => updateField("description", content)}
+            onBlur={guardedBlur}
+          />
+        )}
       </div>
 
       {/* options for validation */}
@@ -309,20 +341,22 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
                 type="radio"
                 name="correctOption"
                 checked={questionData.correctOptionId === option.id}
-                onChange={() => setCorrectOption(option.id)}
+                onChange={readOnly ? undefined : () => setCorrectOption(option.id)}
+                disabled={readOnly}
                 style={styles.radioInput}
                 title="Mark as correct answer"
               />
               <span style={styles.optionLabel}>{option.id.toUpperCase()}.</span>
               <input
                 type="text"
-                style={styles.optionInput}
+                style={{ ...styles.optionInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
                 value={option.text}
-                onChange={(e) => updateOption(option.id, e.target.value)}
-                onBlur={guardedBlur}
+                onChange={readOnly ? undefined : (e) => updateOption(option.id, e.target.value)}
+                onBlur={readOnly ? undefined : guardedBlur}
+                readOnly={readOnly}
                 placeholder={`Option ${option.id.toUpperCase()}`}
               />
-              {questionData.options.length > 2 && (
+              {!readOnly && questionData.options.length > 2 && (
                 <button
                   type="button"
                   style={styles.removeOptionButton}
@@ -335,13 +369,15 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
             </div>
           ))}
         </div>
-        <button
-          type="button"
-          style={styles.addOptionButton}
-          onClick={addOption}
-        >
-          + Add Option
-        </button>
+        {!readOnly && (
+          <button
+            type="button"
+            style={styles.addOptionButton}
+            onClick={addOption}
+          >
+            + Add Option
+          </button>
+        )}
       </div>
 
       {/* feedback */}
@@ -351,10 +387,11 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
           <span style={styles.feedbackLabel}>Correct:</span>
           <input
             type="text"
-            style={styles.feedbackInput}
+            style={{ ...styles.feedbackInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
             value={questionData.feedback?.correct || ""}
-            onChange={(e) => updateFeedback("correct", e.target.value)}
-            onBlur={guardedBlur}
+            onChange={readOnly ? undefined : (e) => updateFeedback("correct", e.target.value)}
+            onBlur={readOnly ? undefined : guardedBlur}
+            readOnly={readOnly}
             placeholder="Feedback for correct answer"
           />
         </div>
@@ -362,10 +399,11 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
           <span style={styles.feedbackLabel}>Incorrect:</span>
           <input
             type="text"
-            style={styles.feedbackInput}
+            style={{ ...styles.feedbackInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
             value={questionData.feedback?.incorrect || ""}
-            onChange={(e) => updateFeedback("incorrect", e.target.value)}
-            onBlur={guardedBlur}
+            onChange={readOnly ? undefined : (e) => updateFeedback("incorrect", e.target.value)}
+            onBlur={readOnly ? undefined : guardedBlur}
+            readOnly={readOnly}
             placeholder="Feedback for incorrect answer"
           />
         </div>
@@ -375,7 +413,7 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
 }
 
 // editor component for text input question (free text answer)
-function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
+function TextQuestionEditor({ data, onChange, onBlur, editorId, readOnly = false }) {
   const [errors, setErrors] = useState({});
 
   // Default data structure
@@ -472,10 +510,11 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
         <label style={styles.mcqLabel}>Question Title *</label>
         <input
           type="text"
-          style={styles.mcqInput}
+          style={{ ...styles.mcqInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
           value={questionData.questionTitle || ""}
-          onChange={(e) => updateField("questionTitle", e.target.value)}
-          onBlur={guardedBlur}
+          onChange={readOnly ? undefined : (e) => updateField("questionTitle", e.target.value)}
+          onBlur={readOnly ? undefined : guardedBlur}
+          readOnly={readOnly}
           placeholder="Enter your question..."
         />
         {errors.questionTitle && (
@@ -486,12 +525,16 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
       {/* description with rich text editor */}
       <div style={styles.mcqField}>
         <label style={styles.mcqLabel}>Description (optional)</label>
-        <WysiwygEditor
-          editorId={`${editorId}-description`}
-          value={questionData.description || ""}
-          onChange={(content) => updateField("description", content)}
-          onBlur={guardedBlur}
-        />
+        {readOnly ? (
+          <WysiwygReadOnly value={questionData.description || ""} />
+        ) : (
+          <WysiwygEditor
+            editorId={`${editorId}-description`}
+            value={questionData.description || ""}
+            onChange={(content) => updateField("description", content)}
+            onBlur={guardedBlur}
+          />
+        )}
       </div>
 
       {/* correct answer */}
@@ -499,10 +542,11 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
         <label style={styles.mcqLabel}>Correct Answer *</label>
         <input
           type="text"
-          style={styles.mcqInput}
+          style={{ ...styles.mcqInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
           value={questionData.correctAnswer || ""}
-          onChange={(e) => updateField("correctAnswer", e.target.value)}
-          onBlur={guardedBlur}
+          onChange={readOnly ? undefined : (e) => updateField("correctAnswer", e.target.value)}
+          onBlur={readOnly ? undefined : guardedBlur}
+          readOnly={readOnly}
           placeholder="Enter the correct answer..."
         />
         {errors.correctAnswer && (
@@ -520,10 +564,11 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
           <span style={styles.feedbackLabel}>Correct:</span>
           <input
             type="text"
-            style={styles.feedbackInput}
+            style={{ ...styles.feedbackInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
             value={questionData.feedback?.correct || ""}
-            onChange={(e) => updateFeedback("correct", e.target.value)}
-            onBlur={guardedBlur}
+            onChange={readOnly ? undefined : (e) => updateFeedback("correct", e.target.value)}
+            onBlur={readOnly ? undefined : guardedBlur}
+            readOnly={readOnly}
             placeholder="Feedback for correct answer"
           />
         </div>
@@ -531,10 +576,11 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
           <span style={styles.feedbackLabel}>Incorrect:</span>
           <input
             type="text"
-            style={styles.feedbackInput}
+            style={{ ...styles.feedbackInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
             value={questionData.feedback?.incorrect || ""}
-            onChange={(e) => updateFeedback("incorrect", e.target.value)}
-            onBlur={guardedBlur}
+            onChange={readOnly ? undefined : (e) => updateFeedback("incorrect", e.target.value)}
+            onBlur={readOnly ? undefined : guardedBlur}
+            readOnly={readOnly}
             placeholder="Feedback for incorrect answer"
           />
         </div>
@@ -544,7 +590,7 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
 }
 
 // editor component for media upload (images and videos) - uses WordPress Media Library
-function MediaUploadEditor({ data, onChange, onBlur }) {
+function MediaUploadEditor({ data, onChange, onBlur, readOnly = false }) {
   const [error, setError] = useState(null);
 
   // Use the data prop directly, with fallback for initial empty state
@@ -615,10 +661,10 @@ function MediaUploadEditor({ data, onChange, onBlur }) {
 
       {!hasMedia ? (
         // Upload/Select area - only show when no media
-        <div style={styles.uploadArea} onClick={handleSelectMedia}>
+        <div style={{ ...styles.uploadArea, ...(readOnly ? { opacity: 0.5, cursor: 'default' } : {}) }} onClick={readOnly ? undefined : handleSelectMedia}>
           <div style={styles.uploadLabel}>
             <span style={styles.uploadIcon}>📁</span>
-            <span>Click to select from Media Library</span>
+            <span>{readOnly ? 'No media selected' : 'Click to select from Media Library'}</span>
             <span style={styles.uploadHint}>Images: JPEG, PNG, GIF, WebP</span>
             <span style={styles.uploadHint}>Videos: MP4, WebM, MOV</span>
             <span style={styles.uploadHint}>(Limit: 1 file per pane)</span>
@@ -659,13 +705,15 @@ function MediaUploadEditor({ data, onChange, onBlur }) {
             <span style={styles.mediaFilename}>
               {mediaData.attachmentId ? `Attachment #${mediaData.attachmentId}` : 'Media file'}
             </span>
-            <button
-              type="button"
-              onClick={handleRemove}
-              style={styles.removeMediaButton}
-            >
-              Remove
-            </button>
+            {!readOnly && (
+              <button
+                type="button"
+                onClick={handleRemove}
+                style={styles.removeMediaButton}
+              >
+                Remove
+              </button>
+            )}
           </div>
 
           {/* Alt text input */}
@@ -673,22 +721,25 @@ function MediaUploadEditor({ data, onChange, onBlur }) {
             <label style={styles.altTextLabel}>Alt Text (optional):</label>
             <input
               type="text"
-              style={styles.altTextInput}
+              style={{ ...styles.altTextInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
               value={mediaData.altText || ""}
-              onChange={(e) => updateAltText(e.target.value)}
-              onBlur={onBlur}
+              onChange={readOnly ? undefined : (e) => updateAltText(e.target.value)}
+              onBlur={readOnly ? undefined : onBlur}
+              readOnly={readOnly}
               placeholder="Describe the media for accessibility..."
             />
           </div>
 
           {/* Replace media button */}
-          <button
-            type="button"
-            onClick={handleSelectMedia}
-            style={styles.replaceMediaButton}
-          >
-            Replace Media
-          </button>
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={handleSelectMedia}
+              style={styles.replaceMediaButton}
+            >
+              Replace Media
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -1228,8 +1279,9 @@ export default function TutorialEditorPage() {
         </label>
         <select
           value={currentType}
-          onChange={(e) => handlePaneTypeChange(slideId, paneKey, e.target.value)}
-          style={styles.select}
+          onChange={isPublished ? undefined : (e) => handlePaneTypeChange(slideId, paneKey, e.target.value)}
+          disabled={isPublished}
+          style={{ ...styles.select, ...(isPublished ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
         >
           <option value="">-- Select type --</option>
           {allowedTypes.map((t) => (
@@ -1244,15 +1296,19 @@ export default function TutorialEditorPage() {
         )}
 
         {pane?.type === "text" && (
-          <WysiwygEditor
-            key={`${slideId}-${paneKey}`}
-            editorId={`gots-wysiwyg-${slideId}-${paneKey}`}
-            value={pane.data?.content || ""}
-            onChange={(content) =>
-              handlePaneContentChange(slideId, paneKey, pane, { content })
-            }
-            onBlur={() => handlePaneContentBlur(slideId)}
-          />
+          isPublished ? (
+            <WysiwygReadOnly key={`${slideId}-${paneKey}`} value={pane.data?.content || ""} />
+          ) : (
+            <WysiwygEditor
+              key={`${slideId}-${paneKey}`}
+              editorId={`gots-wysiwyg-${slideId}-${paneKey}`}
+              value={pane.data?.content || ""}
+              onChange={(content) =>
+                handlePaneContentChange(slideId, paneKey, pane, { content })
+              }
+              onBlur={() => handlePaneContentBlur(slideId)}
+            />
+          )
         )}
 
         {pane?.type === "question" && (
@@ -1271,6 +1327,7 @@ export default function TutorialEditorPage() {
               }));
             }}
             onBlur={() => handlePaneContentBlur(slideId)}
+            readOnly={isPublished}
           />
         )}
 
@@ -1290,6 +1347,7 @@ export default function TutorialEditorPage() {
               }));
             }}
             onBlur={() => handlePaneContentBlur(slideId)}
+            readOnly={isPublished}
           />
         )}
 
@@ -1298,12 +1356,13 @@ export default function TutorialEditorPage() {
             <input
               type="text"
               placeholder="Embed URL (e.g., YouTube, Vimeo, or any embeddable link)"
-              style={styles.input}
+              style={{ ...styles.input, ...(isPublished ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
               value={pane.data?.url || ""}
-              onChange={(e) =>
+              onChange={isPublished ? undefined : (e) =>
                 handlePaneContentChange(slideId, paneKey, pane, { url: e.target.value })
               }
-              onBlur={() => handlePaneContentBlur(slideId)}
+              onBlur={isPublished ? undefined : () => handlePaneContentBlur(slideId)}
+              readOnly={isPublished}
             />
             <p style={styles.embedHint}>
               Tip: For YouTube, you can paste the regular watch URL (e.g., youtube.com/watch?v=...) 
@@ -1316,6 +1375,7 @@ export default function TutorialEditorPage() {
           <MediaUploadEditor
             key={`${slideId}-${paneKey}`}
             data={pane.data}
+            readOnly={isPublished}
             onChange={(mediaData, shouldPersist = false) => {
               // Update local state and ref synchronously
               updateTutorialState((prev) => {
@@ -1361,6 +1421,8 @@ export default function TutorialEditorPage() {
     return <div style={{ padding: "32px" }}>Tutorial not found.</div>;
   }
 
+  const isPublished = tutorial.status === 'published';
+
   return (
     <div style={styles.container}>
       {/* sidebar - slide list */}
@@ -1384,13 +1446,13 @@ export default function TutorialEditorPage() {
               .map((slide) => (
                 <li
                   key={slide.slideId}
-                  draggable
+                  draggable={!isPublished}
                   onClick={() => setActiveSlideId(slide.slideId)}
-                  onDragStart={(e) => handleDragStart(e, slide.slideId)}
-                  onDragEnd={handleDragEnd}
-                  onDragOver={(e) => handleDragOver(e, slide.slideId)}
-                  onDragLeave={handleDragLeave}
-                  onDrop={(e) => handleDrop(e, slide.slideId)}
+                  onDragStart={isPublished ? undefined : (e) => handleDragStart(e, slide.slideId)}
+                  onDragEnd={isPublished ? undefined : handleDragEnd}
+                  onDragOver={isPublished ? undefined : (e) => handleDragOver(e, slide.slideId)}
+                  onDragLeave={isPublished ? undefined : handleDragLeave}
+                  onDrop={isPublished ? undefined : (e) => handleDrop(e, slide.slideId)}
                   style={{
                     ...styles.slideItem,
                     backgroundColor:
@@ -1405,7 +1467,7 @@ export default function TutorialEditorPage() {
                       : {}),
                   }}
                 >
-                  <span style={styles.slideDragHandle}>⋮⋮</span>
+                  {!isPublished && <span style={styles.slideDragHandle}>⋮⋮</span>}
                   <span style={styles.slideOrder}>{slide.order}</span>
                   <span style={styles.slideTitle}>{slide.title || "Untitled"}</span>
                   {!isSlideValid(slide) && (
@@ -1421,7 +1483,11 @@ export default function TutorialEditorPage() {
       <main style={styles.main}>
         <div style={styles.header}>
           <div style={styles.headerLeft}>
-            {isEditingTitle ? (
+            {isPublished ? (
+              <h1 style={styles.pageTitle}>
+                {tutorial.title || "Untitled Tutorial"}
+              </h1>
+            ) : isEditingTitle ? (
               <input
                 ref={titleInputRef}
                 type="text"
@@ -1451,20 +1517,25 @@ export default function TutorialEditorPage() {
                 {tutorial.title || "Untitled Tutorial"}
               </h1>
             )}
-            <span style={styles.statusBadge}>
+            <span style={{
+              ...styles.statusBadge,
+              ...(tutorial.status === 'published'
+                ? { backgroundColor: '#dcfce7', color: '#166534' }
+                : { backgroundColor: '#fef3c7', color: '#92400e' }),
+            }}>
               {tutorial.status || "Draft"}
             </span>
           </div>
           <div style={styles.headerRight}>
             {saveStatus && <span style={styles.saveStatus}>{saveStatus}</span>}
             <button
-              onClick={isActiveSlideValid ? handleAddSlide : undefined}
-              disabled={!isActiveSlideValid}
+              onClick={!isPublished && isActiveSlideValid ? handleAddSlide : undefined}
+              disabled={isPublished || !isActiveSlideValid}
               style={{
                 ...styles.addSlideButton,
-                ...(isActiveSlideValid ? {} : styles.addSlideButtonDisabled),
+                ...(!isPublished && isActiveSlideValid ? {} : styles.addSlideButtonDisabled),
               }}
-              title={isActiveSlideValid ? "Add new slide" : "Complete the current slide before adding a new one"}
+              title={isPublished ? "Cannot add slides to a published tutorial" : isActiveSlideValid ? "Add new slide" : "Complete the current slide before adding a new one"}
             >
               +
             </button>
@@ -1479,9 +1550,13 @@ export default function TutorialEditorPage() {
               <input
                 type="text"
                 value={activeSlide.title || ""}
-                onChange={(e) => handleTitleChange(activeSlide.slideId, e.target.value)}
-                onBlur={() => handleTitleBlur(activeSlide.slideId)}
-                style={styles.titleInput}
+                onChange={isPublished ? undefined : (e) => handleTitleChange(activeSlide.slideId, e.target.value)}
+                onBlur={isPublished ? undefined : () => handleTitleBlur(activeSlide.slideId)}
+                readOnly={isPublished}
+                style={{
+                  ...styles.titleInput,
+                  ...(isPublished ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}),
+                }}
               />
             </div>
 
@@ -1518,36 +1593,42 @@ export default function TutorialEditorPage() {
             {/* done Editing Button */}
             <div style={styles.doneButtonContainer}>
               <button
-                style={styles.deleteSlideButton}
-                onClick={() => handleDeleteSlide(activeSlide.slideId)}
-                title="Permanently delete this slide"
+                style={{
+                  ...styles.deleteSlideButton,
+                  ...(isPublished ? { opacity: 0.4, cursor: 'not-allowed', borderColor: '#d1d5db', color: '#9ca3af' } : {}),
+                }}
+                onClick={isPublished ? undefined : () => handleDeleteSlide(activeSlide.slideId)}
+                disabled={isPublished}
+                title={isPublished ? "Cannot delete slides from a published tutorial" : "Permanently delete this slide"}
               >
                 Delete Slide
               </button>
               <button
-                disabled={!isActiveSlideValid}
+                disabled={!isPublished && !isActiveSlideValid}
                 style={{
                   ...styles.doneButton,
-                  ...(isActiveSlideValid ? {} : styles.doneButtonDisabled),
+                  ...(!isPublished && !isActiveSlideValid ? styles.doneButtonDisabled : {}),
                 }}
                 onClick={async () => {
-                  if (!isActiveSlideValid) return;
-                  // Save the current slide before navigating to ensure no data is lost
-                  if (activeSlideId) {
-                    const currentSlide = tutorialRef.current?.slides?.find((s) => s.slideId === activeSlideId);
-                    if (currentSlide) {
-                      setSaveStatus("Saving...");
-                      try {
-                        await persistSlideUpdate(currentSlide);
-                      } catch (err) {
-                        console.error("Error saving before navigation:", err);
+                  if (!isPublished) {
+                    if (!isActiveSlideValid) return;
+                    // Save the current slide before navigating to ensure no data is lost
+                    if (activeSlideId) {
+                      const currentSlide = tutorialRef.current?.slides?.find((s) => s.slideId === activeSlideId);
+                      if (currentSlide) {
+                        setSaveStatus("Saving...");
+                        try {
+                          await persistSlideUpdate(currentSlide);
+                        } catch (err) {
+                          console.error("Error saving before navigation:", err);
+                        }
                       }
                     }
                   }
                   navigate(`/tutorials?highlight=${id}`);
                 }}
               >
-                Done Editing
+                {isPublished ? 'Back to Tutorials' : 'Done Editing'}
               </button>
             </div>
           </div>
@@ -1733,8 +1814,6 @@ const styles = {
     fontSize: "12px",
     fontWeight: "500",
     borderRadius: "9999px",
-    backgroundColor: "#fef3c7",
-    color: "#92400e",
     textTransform: "capitalize",
   },
   addSlideButton: {

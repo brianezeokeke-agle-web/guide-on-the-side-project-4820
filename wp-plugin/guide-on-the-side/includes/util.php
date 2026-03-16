@@ -49,6 +49,41 @@ function gots_create_empty_slide($order) {
     );
 }
 
+// Returns true if a pane is null, has no type, or is missing type-specific content.
+function gots_is_pane_empty($pane) {
+    if (!is_array($pane) || empty($pane['type'])) return true;
+    $data = isset($pane['data']) && is_array($pane['data']) ? $pane['data'] : array();
+    switch ($pane['type']) {
+        case 'text':
+            $content = isset($data['content']) ? $data['content'] : '';
+            return trim(strip_tags($content)) === '';
+        case 'question':
+        case 'textQuestion':
+            $title = isset($data['questionTitle']) ? trim($data['questionTitle']) : '';
+            return $title === '';
+        case 'embed':
+            $url = isset($data['url']) ? trim($data['url']) : '';
+            return $url === '';
+        case 'media':
+            return empty($data['url']);
+        default:
+            return true;
+    }
+}
+
+// Returns true when at least one slide has an empty left or right pane.
+function gots_has_empty_slides($slides) {
+    if (empty($slides)) return true;
+    foreach ($slides as $slide) {
+        $left  = isset($slide['leftPane'])  ? $slide['leftPane']  : null;
+        $right = isset($slide['rightPane']) ? $slide['rightPane'] : null;
+        if (gots_is_pane_empty($left) || gots_is_pane_empty($right)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /**
  * Merge incoming slides with existing slides
  * 

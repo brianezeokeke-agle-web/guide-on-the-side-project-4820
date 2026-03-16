@@ -409,11 +409,38 @@ function gots_rest_update_tutorial($request) {
         );
     }
     
+    // published tutorials are locked — only archiving is allowed
+    if ($post->post_status === 'publish') {
+        $allowed_keys = array('archived');
+        $submitted_keys = array_keys($params);
+        $disallowed = array_diff($submitted_keys, $allowed_keys);
+        if (!empty($disallowed)) {
+            return new WP_Error(
+                'tutorial_locked',
+                __('Published tutorials cannot be modified. Only archiving is allowed.', 'guide-on-the-side'),
+                array('status' => 403)
+            );
+        }
+    }
+    
     // validate and sanitize input
     $sanitized = gots_sanitize_tutorial_data($params, false);
     
     if (is_wp_error($sanitized)) {
         return $sanitized;
+    }
+    
+    // block publishing if any slide has empty content panes
+    if (isset($sanitized['status']) && $sanitized['status'] === 'publish') {
+        $slides_json = get_post_meta($id, '_gots_slides', true);
+        $slides = !empty($slides_json) ? json_decode($slides_json, true) : array();
+        if (!is_array($slides) || empty($slides) || gots_has_empty_slides($slides)) {
+            return new WP_Error(
+                'empty_slides',
+                __('Cannot publish: one or more slides have empty content panes. Please fill in all slide content before publishing.', 'guide-on-the-side'),
+                array('status' => 422)
+            );
+        }
     }
     
     // prepare post update data

@@ -686,15 +686,47 @@ function gots_rest_duplicate_tutorial($request) {
 
     // save the duplicated slides
     if (!empty($slides)) {
-        $new_slides_json = wp_json_encode($slides);
-        update_post_meta($new_post_id, '_gots_slides', $new_slides_json);
+        $slides_to_save = $slides;
     } else {
-        // if the original had no slides, create 2 empty ones like a new tutorial
-        $empty_slides = array(
+        // if the original had no slides, create 2 empty ones by default like a new tutorial
+        $slides_to_save = array(
             gots_create_empty_slide(1),
             gots_create_empty_slide(2),
         );
-        update_post_meta($new_post_id, '_gots_slides', wp_json_encode($empty_slides));
+    }
+
+    $slides_json_to_save = wp_json_encode($slides_to_save);
+    // Write slides JSON directly to the postmeta table to avoid WP meta handling
+    // corrupting JSON that contains HTML/escaped quotes (same as slides-merge path).
+    global $wpdb;
+    $meta_table = $wpdb->postmeta;
+    $meta_key   = '_gots_slides';
+    $updated = $wpdb->update(
+        $meta_table,
+        array(
+            'meta_value' => $slides_json_to_save,
+        ),
+        array(
+            'post_id'  => $new_post_id,
+            'meta_key' => $meta_key,
+        ),
+        array('%s'),
+        array('%d', '%s')
+    );
+    if ($updated === 0) {
+        $wpdb->insert(
+            $meta_table,
+            array(
+                'post_id'    => $new_post_id,
+                'meta_key'   => $meta_key,
+                'meta_value' => $slides_json_to_save,
+            ),
+            array('%d', '%s', '%s')
+        );
+    }
+    // Clear the post meta cache so subsequent reads see the new slides JSON.
+    if (function_exists('wp_cache_delete')) {
+        wp_cache_delete($new_post_id, 'post_meta');
     }
 
     // get the created post and return the formatted response

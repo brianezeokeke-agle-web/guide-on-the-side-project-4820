@@ -232,4 +232,5 @@ export default {
   publishTutorial,
   unpublishTutorial,
   updateTutorialSlides,
+  duplicateTutorial,
 };

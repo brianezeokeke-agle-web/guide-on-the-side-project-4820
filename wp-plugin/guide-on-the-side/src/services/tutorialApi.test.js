@@ -13,6 +13,7 @@ import {
   publishTutorial,
   unpublishTutorial,
   updateTutorialSlides,
+  duplicateTutorial,
 } from './tutorialApi';
 
 // Mock fetch globally
@@ -357,6 +358,56 @@ describe('Tutorial API Service (WordPress)', () => {
       body: JSON.stringify({ slides: [] }),
     }));
     expect(result.slides).toEqual([]);
+  });
+
+  // --- duplicateTutorial ---
+
+  // Verify POST /tutorials/:id/duplicate is called and returns the new tutorial
+  test('duplicateTutorial should post to duplicate endpoint and return new tutorial', async () => {
+    const mockDuplicated = { id: 42, title: 'Tutorial 1 (Copy)', status: 'draft' };
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockDuplicated,
+    });
+
+    const result = await duplicateTutorial(7);
+
+    expect(fetch).toHaveBeenCalledWith(`${mockRestUrl}/tutorials/7/duplicate`, expect.objectContaining({
+      method: 'POST',
+    }));
+    expect(result).toEqual(mockDuplicated);
+  });
+
+  // Verify duplicateTutorial throws 'Tutorial not found' on a 404 response
+  test('duplicateTutorial should throw error if tutorial not found', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+    });
+
+    await expect(duplicateTutorial(999)).rejects.toThrow('Tutorial not found');
+  });
+
+  // Verify duplicateTutorial uses the server-provided error message on non-404 failure
+  test('duplicateTutorial should throw server error message on non-404 failure', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      json: async () => ({ message: 'Permission denied' }),
+    });
+
+    await expect(duplicateTutorial(1)).rejects.toThrow('Permission denied');
+  });
+
+  // Verify duplicateTutorial falls back to generic message when server body is not JSON
+  test('duplicateTutorial should throw fallback message when response body is not JSON', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: async () => { throw new Error('not json'); },
+    });
+
+    await expect(duplicateTutorial(1)).rejects.toThrow('Failed to duplicate tutorial');
   });
 
   // --- apiRequest / config helpers ---

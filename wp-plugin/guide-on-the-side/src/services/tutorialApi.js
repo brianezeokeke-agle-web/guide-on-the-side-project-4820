@@ -179,6 +179,27 @@ export async function updateTutorialSlides(id, slides) {
 }
 
 /**
+ * Duplicate a tutorial (create an exact copy as a draft)
+ * @param {string|number} id - Tutorial ID to duplicate
+ * @returns {Promise<Object>} The newly created tutorial object
+ */
+export async function duplicateTutorial(id) {
+  const response = await apiRequest(`/tutorials/${id}/duplicate`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error('Tutorial not found');
+    }
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || 'Failed to duplicate tutorial');
+  }
+
+  return response.json();
+}
+
+/**
  * Delete a tutorial permanently
  * @param {string|number} id - Tutorial ID
  * @returns {Promise<Object>} Deletion result

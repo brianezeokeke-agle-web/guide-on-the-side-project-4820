@@ -73,6 +73,20 @@ function gots_register_rest_routes() {
         ),
     ));
 
+    // POST /tutorials/{id}/duplicate - create a copy of an existing tutorial
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/duplicate', array(
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'gots_rest_duplicate_tutorial',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+        'args'                => array(
+            'id' => array(
+                'validate_callback' => function($param) {
+                    return is_numeric($param);
+                },
+            ),
+        ),
+    ));
+
     // GET /tutorials/{id}/public - get a tutorial for public playback (no authentication needed)
     register_rest_route($namespace, '/tutorials/(?P<id>\d+)/public', array(
         'methods'             => WP_REST_Server::READABLE,
@@ -596,6 +610,97 @@ function gots_rest_update_tutorial($request) {
     $updated_post = get_post($id);
     
     return rest_ensure_response(gots_format_tutorial_response($updated_post));
+}
+
+/**
+ * function to duplicate an existing tutorial
+ * creates an exact copy as a draft with "Copy of" prepended to the existing title
+ *
+ * @param WP_REST_Request $request Request object
+ * @return WP_REST_Response|WP_Error
+ */
+function gots_rest_duplicate_tutorial($request) {
+    $id = (int) $request->get_param('id');
+
+    // get the existing post
+    $post = get_post($id);
+
+    // check if post exists and is the correct type
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error(
+            'tutorial_not_found',
+            __('Tutorial not found.', 'guide-on-the-side'),
+            array('status' => 404)
+        );
+    }
+
+    // check post status (only draft and publish are valid)
+    if (!in_array($post->post_status, array('draft', 'publish'), true)) {
+        return new WP_Error(
+            'tutorial_not_found',
+            __('Tutorial not found.', 'guide-on-the-side'),
+            array('status' => 404)
+        );
+    }
+
+    // create the duplicate post as a draft
+    $new_post_data = array(
+        'post_type'   => 'gots_tutorial',
+        'post_title'  => 'Copy of ' . $post->post_title,
+        'post_status' => 'draft',
+        'post_author' => get_current_user_id(),
+    );
+
+    $new_post_id = wp_insert_post($new_post_data, true);
+
+    if (is_wp_error($new_post_id)) {
+        return new WP_Error(
+            'duplicate_failed',
+            __('Failed to duplicate tutorial.', 'guide-on-the-side'),
+            array('status' => 500)
+        );
+    }
+
+    // copy the description meta
+    $description = get_post_meta($id, '_gots_description', true);
+    update_post_meta($new_post_id, '_gots_description', $description ?: '');
+
+    // set archived flag to false by default for the copy
+    update_post_meta($new_post_id, '_gots_archived', 0);
+
+    // copy the slides, but generate new slide IDs so the copy is independent
+    $slides_json = get_post_meta($id, '_gots_slides', true);
+    $slides = array();
+    if (!empty($slides_json)) {
+        $decoded = json_decode($slides_json, true);
+        if (is_array($decoded)) {
+            $slides = $decoded;
+        }
+    }
+
+    // assign new UUIDs to each slide so edits to the copy don't clash with the existing tut
+    foreach ($slides as &$slide) {
+        $slide['slideId'] = gots_generate_uuid();
+    }
+    unset($slide);
+
+    // save the duplicated slides
+    if (!empty($slides)) {
+        $new_slides_json = wp_json_encode($slides);
+        update_post_meta($new_post_id, '_gots_slides', $new_slides_json);
+    } else {
+        // if the original had no slides, create 2 empty ones like a new tutorial
+        $empty_slides = array(
+            gots_create_empty_slide(1),
+            gots_create_empty_slide(2),
+        );
+        update_post_meta($new_post_id, '_gots_slides', wp_json_encode($empty_slides));
+    }
+
+    // get the created post and return the formatted response
+    $new_post = get_post($new_post_id);
+
+    return rest_ensure_response(gots_format_tutorial_response($new_post));
 }
 
 /**

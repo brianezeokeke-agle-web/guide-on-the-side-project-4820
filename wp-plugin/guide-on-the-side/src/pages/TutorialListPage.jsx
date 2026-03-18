@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import ShareModal from "../components/ShareModal";
-import { listTutorials, updateTutorial, deleteTutorial } from "../services/tutorialApi";
+import { listTutorials, updateTutorial, deleteTutorial, duplicateTutorial } from "../services/tutorialApi";
 import { hasEmptySlides } from "../services/slideValidation";
 
 //helper function to get relative time for last edited display
@@ -250,6 +250,22 @@ export default function TutorialListPage() {
     }
   };
 
+  const handleDuplicate = async (e, tutorialId) => {
+    e.stopPropagation();
+    setOpenDropdownId(null);
+
+    try {
+      const newTutorial = await duplicateTutorial(tutorialId);
+      // Add the new tutorial to the list and highlight it so the author is immedietly drawn to it
+      setTutorials((prev) => [newTutorial, ...prev]);
+      setHighlightId(newTutorial.tutorialId);
+      setTimeout(() => setHighlightId(null), 1500);
+    } catch (err) {
+      console.error("Failed to duplicate tutorial", err);
+      alert("Failed to create a copy. Please try again.");
+    }
+  };
+
   if (loading) {
     return (
       <div style={styles.container}>
@@ -418,6 +434,12 @@ export default function TutorialListPage() {
                             )}
                           </>
                         )}
+                        <button
+                          style={styles.dropdownItem}
+                          onClick={(e) => handleDuplicate(e, tut.tutorialId)}
+                        >
+                          Create a Copy
+                        </button>
                         <button
                           style={styles.dropdownItem}
                           onClick={(e) => handlePreview(e, tut.tutorialId)}

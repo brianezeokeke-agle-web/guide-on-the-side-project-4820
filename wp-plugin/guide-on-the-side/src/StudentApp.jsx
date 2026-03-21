@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { recordAnalyticsEvent } from "./services/analyticsApi";
+import { isTextAnswerCorrect } from "./services/slideValidation";
 
 /**
  * Get student configuration from WordPress
@@ -128,7 +129,9 @@ export default function StudentApp() {
     
     if (leftPane.type === "textQuestion") {
       // If no correct answer is configured, don't block the student
-      if (!leftPane.data?.correctAnswer?.trim()) return false;
+      // Support both legacy correctAnswer and new correctAnswers array
+      const answers = leftPane.data?.correctAnswers || (leftPane.data?.correctAnswer ? [leftPane.data.correctAnswer] : []);
+      if (!answers.some((a) => a?.trim())) return false;
       return leftPane.data?.required !== false;
     }
     
@@ -152,10 +155,8 @@ export default function StudentApp() {
     }
     
     if (leftPane.type === "textQuestion") {
-      // Text question
-      const answer = (answers[slideId] || "").toLowerCase().trim();
-      const correct = (leftPane.data?.correctAnswer || "").toLowerCase().trim();
-      return answer === correct;
+      // Text question — match against any of the accepted correct answers
+      return isTextAnswerCorrect(answers[slideId], leftPane.data);
     }
     
     return true;

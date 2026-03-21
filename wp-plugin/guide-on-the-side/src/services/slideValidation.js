@@ -24,3 +24,14 @@ export function hasEmptySlides(tutorial) {
   if (slides.length === 0) return true;
   return slides.some((s) => isPaneEmpty(s.leftPane) || isPaneEmpty(s.rightPane));
 }
+
+// this returns true if the student's answer matches any of the accepted correct answers
+// for a text question. the comparison is case insensitive and trims white spaces
+// it supports both the legacy single `correctAnswer` string and the new `correctAnswers` array.
+export function isTextAnswerCorrect(studentAnswer, paneData) {
+  const input = (studentAnswer || '').toLowerCase().trim();
+  if (!input) return false;
+  const accepted = paneData?.correctAnswers
+    || (paneData?.correctAnswer ? [paneData.correctAnswer] : []);
+  return accepted.some((ca) => (ca || '').toLowerCase().trim() === input);
+}

@@ -1,6 +1,6 @@
 // Unit Test: Slide Validation Utilities
 
-import { isPaneEmpty, hasEmptySlides } from './slideValidation';
+import { isPaneEmpty, hasEmptySlides, isTextAnswerCorrect } from './slideValidation';
 
 describe('Slide Validation Utilities', () => {
   // --- isPaneEmpty ---
@@ -196,6 +196,115 @@ describe('Slide Validation Utilities', () => {
           rightPane: { type: 'text', data: { content: 'Some instructions' } },
         }],
       })).toBe(false);
+    });
+  });
+
+  // --- isTextAnswerCorrect ---
+
+  describe('isTextAnswerCorrect', () => {
+    // basic matching with correctAnswers array
+    test('should return true when student answer matches the single correct answer', () => {
+      expect(isTextAnswerCorrect('20', { correctAnswers: ['20'] })).toBe(true);
+    });
+
+    test('should return true when student answer matches one of multiple correct answers', () => {
+      const data = { correctAnswers: ['20', 'twenty', 'Twenty'] };
+      expect(isTextAnswerCorrect('twenty', data)).toBe(true);
+    });
+
+    test('should return false when student answer matches none of the correct answers', () => {
+      const data = { correctAnswers: ['20', 'twenty'] };
+      expect(isTextAnswerCorrect('19', data)).toBe(false);
+    });
+
+    // case insensitivity
+    test('should match case-insensitively', () => {
+      expect(isTextAnswerCorrect('TWENTY', { correctAnswers: ['twenty'] })).toBe(true);
+    });
+
+    test('should match mixed case against mixed case', () => {
+      expect(isTextAnswerCorrect('TwEnTy', { correctAnswers: ['tWeNtY'] })).toBe(true);
+    });
+
+    // whitespace trimming
+    test('should trim whitespace from student answer', () => {
+      expect(isTextAnswerCorrect('  20  ', { correctAnswers: ['20'] })).toBe(true);
+    });
+
+    test('should trim whitespace from correct answers', () => {
+      expect(isTextAnswerCorrect('20', { correctAnswers: ['  20  '] })).toBe(true);
+    });
+
+    // empty / null student input
+    test('should return false for empty student answer', () => {
+      expect(isTextAnswerCorrect('', { correctAnswers: ['20'] })).toBe(false);
+    });
+
+    test('should return false for null student answer', () => {
+      expect(isTextAnswerCorrect(null, { correctAnswers: ['20'] })).toBe(false);
+    });
+
+    test('should return false for undefined student answer', () => {
+      expect(isTextAnswerCorrect(undefined, { correctAnswers: ['20'] })).toBe(false);
+    });
+
+    test('should return false for whitespace-only student answer', () => {
+      expect(isTextAnswerCorrect('   ', { correctAnswers: ['20'] })).toBe(false);
+    });
+
+    // empty / null pane data
+    test('should return false when paneData is null', () => {
+      expect(isTextAnswerCorrect('20', null)).toBe(false);
+    });
+
+    test('should return false when paneData is undefined', () => {
+      expect(isTextAnswerCorrect('20', undefined)).toBe(false);
+    });
+
+    test('should return false when correctAnswers is an empty array', () => {
+      expect(isTextAnswerCorrect('20', { correctAnswers: [] })).toBe(false);
+    });
+
+    test('should return false when correctAnswers contains only empty strings', () => {
+      expect(isTextAnswerCorrect('20', { correctAnswers: ['', '  '] })).toBe(false);
+    });
+
+    // backward compatibility with legacy correctAnswer (single string)
+    test('should match against legacy correctAnswer string', () => {
+      expect(isTextAnswerCorrect('20', { correctAnswer: '20' })).toBe(true);
+    });
+
+    test('should match legacy correctAnswer case-insensitively', () => {
+      expect(isTextAnswerCorrect('HELLO', { correctAnswer: 'hello' })).toBe(true);
+    });
+
+    test('should return false when legacy correctAnswer does not match', () => {
+      expect(isTextAnswerCorrect('19', { correctAnswer: '20' })).toBe(false);
+    });
+
+    test('should return false for empty legacy correctAnswer', () => {
+      expect(isTextAnswerCorrect('20', { correctAnswer: '' })).toBe(false);
+    });
+
+    // correctAnswers takes priority over correctAnswer
+    test('should use correctAnswers array when both fields exist', () => {
+      const data = { correctAnswers: ['yes', 'yep'], correctAnswer: 'no' };
+      expect(isTextAnswerCorrect('yes', data)).toBe(true);
+      expect(isTextAnswerCorrect('no', data)).toBe(false);
+    });
+
+    // multiple answers with varied cases and whitespace
+    test('should match any answer in a list with mixed formatting', () => {
+      const data = { correctAnswers: ['  Paris ', 'paris', 'PARIS', 'City of Light'] };
+      expect(isTextAnswerCorrect('paris', data)).toBe(true);
+      expect(isTextAnswerCorrect('PARIS', data)).toBe(true);
+      expect(isTextAnswerCorrect('city of light', data)).toBe(true);
+      expect(isTextAnswerCorrect('London', data)).toBe(false);
+    });
+
+    // skips null entries in correctAnswers gracefully
+    test('should handle null entries in correctAnswers array', () => {
+      expect(isTextAnswerCorrect('20', { correctAnswers: [null, '20', undefined] })).toBe(true);
     });
   });
 });

@@ -421,7 +421,7 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId, readOnly = false
     questionType: "textInput",
     questionTitle: "",
     description: "",
-    correctAnswer: "",
+    correctAnswers: [""],
     caseSensitive: false, // always compare as lowercase
     required: true,
     feedback: {
@@ -430,10 +430,18 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId, readOnly = false
     },
   };
 
+  // Migrate legacy single correctAnswer to correctAnswers array
+  const migrateAnswers = (d) => {
+    if (d?.correctAnswers && Array.isArray(d.correctAnswers)) return d.correctAnswers;
+    if (d?.correctAnswer) return [d.correctAnswer];
+    return [""];
+  };
+
   // Use internal state initialized from props, with defaults for missing fields
   const [questionData, setQuestionData] = useState(() => ({
     ...defaultData,
     ...data,
+    correctAnswers: migrateAnswers(data),
     feedback: { ...defaultData.feedback, ...data?.feedback },
   }));
 
@@ -454,6 +462,7 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId, readOnly = false
         setQuestionData({
           ...defaultData,
           ...data,
+          correctAnswers: migrateAnswers(data),
           feedback: { ...defaultData.feedback, ...data.feedback },
         });
       }
@@ -465,8 +474,9 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId, readOnly = false
     if (!newData.questionTitle?.trim()) {
       newErrors.questionTitle = "Question title is required";
     }
-    if (!newData.correctAnswer?.trim()) {
-      newErrors.correctAnswer = "Correct answer is required";
+    const hasAtLeastOne = (newData.correctAnswers || []).some((a) => a.trim());
+    if (!hasAtLeastOne) {
+      newErrors.correctAnswers = "At least one correct answer is required";
     }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -488,7 +498,7 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId, readOnly = false
     onChange(newData);
   };
 
-  const isValid = !!questionData.correctAnswer?.trim();
+  const isValid = (questionData.correctAnswers || []).some((a) => a.trim());
 
   // Only allow save (onBlur) when a correct answer is provided
   const guardedBlur = () => {
@@ -537,23 +547,56 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId, readOnly = false
         )}
       </div>
 
-      {/* correct answer */}
+      {/* correct answers (up to 5) */}
       <div style={styles.mcqField}>
-        <label style={styles.mcqLabel}>Correct Answer *</label>
-        <input
-          type="text"
-          style={{ ...styles.mcqInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
-          value={questionData.correctAnswer || ""}
-          onChange={readOnly ? undefined : (e) => updateField("correctAnswer", e.target.value)}
-          onBlur={readOnly ? undefined : guardedBlur}
-          readOnly={readOnly}
-          placeholder="Enter the correct answer..."
-        />
-        {errors.correctAnswer && (
-          <span style={styles.errorText}>{errors.correctAnswer}</span>
+        <label style={styles.mcqLabel}>Correct Answer(s) *</label>
+        {(questionData.correctAnswers || [""]).map((answer, idx) => (
+          <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '6px' }}>
+            <input
+              type="text"
+              style={{ ...styles.mcqInput, flex: 1, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
+              value={answer}
+              onChange={readOnly ? undefined : (e) => {
+                const updated = [...(questionDataRef.current.correctAnswers || [""])];
+                updated[idx] = e.target.value;
+                updateField("correctAnswers", updated);
+              }}
+              onBlur={readOnly ? undefined : guardedBlur}
+              readOnly={readOnly}
+              placeholder={idx === 0 ? "Enter the correct answer..." : `Alternative answer ${idx + 1}...`}
+            />
+            {!readOnly && idx > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const updated = (questionDataRef.current.correctAnswers || [""]).filter((_, i) => i !== idx);
+                  updateField("correctAnswers", updated);
+                }}
+                style={{ background: 'none', border: 'none', color: '#991b1b', cursor: 'pointer', fontSize: '18px', padding: '4px 8px' }}
+                title="Remove this answer"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        ))}
+        {!readOnly && (questionData.correctAnswers || [""]).length < 5 && (
+          <button
+            type="button"
+            onClick={() => {
+              const updated = [...(questionDataRef.current.correctAnswers || [""]), ""];
+              updateField("correctAnswers", updated);
+            }}
+            style={{ background: 'none', border: '1px dashed #d1d5db', borderRadius: '6px', padding: '6px 12px', color: '#6b7280', cursor: 'pointer', fontSize: '13px', marginTop: '2px' }}
+          >
+            + Add alternative answer
+          </button>
+        )}
+        {errors.correctAnswers && (
+          <span style={styles.errorText}>{errors.correctAnswers}</span>
         )}
         <span style={styles.hintText}>
-          Note: Answers are compared case-insensitively (e.g., "Hello" matches "hello")
+          Answers are not case-sensitive. You can add up to 5 correct answers.
         </span>
       </div>
 
@@ -937,7 +980,7 @@ export default function TutorialEditorPage() {
           questionType: "textInput",
           questionTitle: "",
           description: "",
-          correctAnswer: "",
+          correctAnswers: [""],
           caseSensitive: false,
           required: true,
           feedback: {
@@ -1116,8 +1159,12 @@ export default function TutorialEditorPage() {
         if (!pane.data?.questionTitle?.trim()) {
           errors.push(`${paneLabel}: Question title is required`);
         }
-        if (!pane.data?.correctAnswer?.trim()) {
-          errors.push(`${paneLabel}: Correct answer is required`);
+        {
+          // support both legacy correctAnswer and new correctAnswers array
+          const answers = pane.data?.correctAnswers || (pane.data?.correctAnswer ? [pane.data.correctAnswer] : []);
+          if (!answers.some((a) => a?.trim())) {
+            errors.push(`${paneLabel}: At least one correct answer is required`);
+          }
         }
         break;
       case "embed":

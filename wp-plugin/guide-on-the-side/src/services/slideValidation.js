@@ -25,9 +25,9 @@ export function hasEmptySlides(tutorial) {
   return slides.some((s) => isPaneEmpty(s.leftPane) || isPaneEmpty(s.rightPane));
 }
 
-// Returns true if the student's answer matches any of the accepted correct answers
-// for a text question. Comparison is case-insensitive and trimmed.
-// Supports both the legacy single `correctAnswer` string and the new `correctAnswers` array.
+// this returns true if the student's answer matches any of the accepted correct answers
+// for a text question. the comparison is case insensitive and trims white spaces
+// it supports both the legacy single `correctAnswer` string and the new `correctAnswers` array.
 export function isTextAnswerCorrect(studentAnswer, paneData) {
   const input = (studentAnswer || '').toLowerCase().trim();
   if (!input) return false;

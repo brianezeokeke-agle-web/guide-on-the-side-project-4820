@@ -430,11 +430,20 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId, readOnly = false
     },
   };
 
-  // Migrate legacy single correctAnswer to correctAnswers array
+  // Migrate legacy single correctAnswer to correctAnswers array.
+  // Cap at 5 entries and coerce non-strings to "" so malformed/legacy data
+  // can't render an unbounded list or break downstream .trim() calls.
   const migrateAnswers = (d) => {
-    if (d?.correctAnswers && Array.isArray(d.correctAnswers)) return d.correctAnswers;
-    if (d?.correctAnswer) return [d.correctAnswer];
-    return [""];
+    let raw;
+    if (d?.correctAnswers && Array.isArray(d.correctAnswers)) {
+      raw = d.correctAnswers;
+    } else if (d?.correctAnswer) {
+      raw = [d.correctAnswer];
+    } else {
+      return [""];
+    }
+    const sanitized = raw.slice(0, 5).map((a) => (typeof a === "string" ? a : ""));
+    return sanitized.length > 0 ? sanitized : [""];
   };
 
   // Use internal state initialized from props, with defaults for missing fields
@@ -474,7 +483,9 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId, readOnly = false
     if (!newData.questionTitle?.trim()) {
       newErrors.questionTitle = "Question title is required";
     }
-    const hasAtLeastOne = (newData.correctAnswers || []).some((a) => a.trim());
+    const hasAtLeastOne = (newData.correctAnswers || []).some(
+      (a) => typeof a === "string" && a.trim()
+    );
     if (!hasAtLeastOne) {
       newErrors.correctAnswers = "At least one correct answer is required";
     }
@@ -498,7 +509,9 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId, readOnly = false
     onChange(newData);
   };
 
-  const isValid = (questionData.correctAnswers || []).some((a) => a.trim());
+  const isValid = (questionData.correctAnswers || []).some(
+    (a) => typeof a === "string" && a.trim()
+  );
 
   // Only allow save (onBlur) when a correct answer is provided
   const guardedBlur = () => {

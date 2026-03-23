@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import ShareModal from "../components/ShareModal";
 import { listTutorials, updateTutorial, deleteTutorial } from "../services/tutorialApi";
-import { hasEmptySlides } from "../services/slideValidation";
+import { hasEmptySlides, validateBranchConfig } from "../services/slideValidation";
 
 //helper function to get relative time for last edited display
 function getRelativeTime(dateString) {
@@ -183,10 +183,21 @@ export default function TutorialListPage() {
     e.stopPropagation();
     setOpenDropdownId(null);
 
-    // Block publishing if any slide has empty content panes
+    // Block publishing if any slide has empty content panes or invalid branch configs
     const tut = tutorials.find((t) => t.tutorialId === tutorialId);
+    const regularSlides = (tut?.slides || []).filter((s) => !s.isBranchSlide);
+    if (regularSlides.length < 2) {
+      alert('Could not publish tutorial: a tutorial must have at least 2 slides (not counting conditional branch slides).');
+      return;
+    }
     if (hasEmptySlides(tut)) {
       alert('Could not publish tutorial as it contains empty slides. Please fill in all slide content before publishing.');
+      return;
+    }
+    const allSlides = tut?.slides || [];
+    const branchErrors = allSlides.flatMap((s) => validateBranchConfig(s, allSlides));
+    if (branchErrors.length > 0) {
+      alert('Could not publish tutorial: one or more branch slide configurations are invalid.\n\n' + branchErrors.join('\n'));
       return;
     }
 

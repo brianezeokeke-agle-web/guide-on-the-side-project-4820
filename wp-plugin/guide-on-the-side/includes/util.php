@@ -100,7 +100,7 @@ function gots_validate_branch_configs($slides) {
 
     // Build look-up maps
     $slides_by_id   = array();
-    $children_by_id = array(); // parentId → array of branch children
+    $children_by_id = array(); // parentId- array of branch children
     foreach ($slides as $slide) {
         if (!isset($slide['slideId'])) continue;
         $slides_by_id[$slide['slideId']] = $slide;
@@ -189,6 +189,24 @@ function gots_validate_branch_configs($slides) {
             } else {
                 $errors[] = sprintf('Slide "%s": invalid branch operator "%s".', $sid, $operator);
             }
+        }
+
+        // cycle detection: walk the ancestry chain and error if we revisit a slide
+        $visited  = array();
+        $ancestor = $slide;
+        $has_cycle = false;
+        while ($ancestor && !empty($ancestor['isBranchSlide']) && !empty($ancestor['branchParentSlideId'])) {
+            $ancestor_id = $ancestor['slideId'];
+            if (isset($visited[$ancestor_id])) {
+                $has_cycle = true;
+                break;
+            }
+            $visited[$ancestor_id] = true;
+            $ancestor = isset($slides_by_id[$ancestor['branchParentSlideId']]) ? $slides_by_id[$ancestor['branchParentSlideId']] : null;
+        }
+        if ($has_cycle) {
+            $errors[] = sprintf('Slide "%s": cycle detected in branch ancestry chain. A slide cannot be its own ancestor.', $sid);
+            continue;
         }
 
         // duplicate-condition check among siblings, so we dont break the playback

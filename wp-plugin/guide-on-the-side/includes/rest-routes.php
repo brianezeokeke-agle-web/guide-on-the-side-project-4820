@@ -434,14 +434,20 @@ function gots_rest_update_tutorial($request) {
     if (isset($sanitized['status']) && $sanitized['status'] === 'publish') {
         $slides_json = get_post_meta($id, '_gots_slides', true);
         $slides = !empty($slides_json) ? json_decode($slides_json, true) : array();
-        if (!is_array($slides) || empty($slides) || gots_has_empty_slides($slides)) {
+        // Merge any incoming slide updates first so all subsequent checks run
+        // against the final state rather than potentially stale stored slides.
+        $slides_to_validate = $slides;
+        if (!empty($sanitized['slides'])) {
+            $slides_to_validate = gots_merge_slides($slides, $sanitized['slides']);
+        }
+        if (!is_array($slides_to_validate) || empty($slides_to_validate) || gots_has_empty_slides($slides_to_validate)) {
             return new WP_Error(
                 'empty_slides',
                 __('Cannot publish: one or more slides have empty content panes. Please fill in all slide content before publishing.', 'guide-on-the-side'),
                 array('status' => 422)
             );
         }
-        $regular_slide_count = count(array_filter($slides, function($s) {
+        $regular_slide_count = count(array_filter($slides_to_validate, function($s) {
             return empty($s['isBranchSlide']);
         }));
         if ($regular_slide_count < 2) {
@@ -450,12 +456,6 @@ function gots_rest_update_tutorial($request) {
                 __('Cannot publish: a tutorial must have at least 2 slides (not counting conditional branch slides).', 'guide-on-the-side'),
                 array('status' => 422)
             );
-        }
-        // merge incoming slides (if there are any) before running branch validation so that
-        // in-progress branch config changes are also checked.
-        $slides_to_validate = $slides;
-        if (!empty($sanitized['slides'])) {
-            $slides_to_validate = gots_merge_slides($slides, $sanitized['slides']);
         }
         $branch_errors = gots_validate_branch_configs($slides_to_validate);
         if (!empty($branch_errors)) {

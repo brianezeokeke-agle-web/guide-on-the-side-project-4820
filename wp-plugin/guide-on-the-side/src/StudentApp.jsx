@@ -1,6 +1,14 @@
 import { useState, useEffect, useRef } from "react";
 import { recordAnalyticsEvent } from "./services/analyticsApi";
 import { isTextAnswerCorrect } from "./services/slideValidation";
+import {
+  buildSlidesById,
+  buildRegularSlideOrder,
+  buildBranchChildrenMap,
+  evaluateBranchMatch,
+  getFirstSlideId,
+  getNextSlideId,
+} from "./services/branchHelpers";
 
 /**
  * Get student configuration from WordPress
@@ -24,19 +32,19 @@ async function fetchTutorial(tutorialId) {
   const config = getConfig();
   const isPreview = config.isPreview;
   const url = `${config.restUrl}/tutorials/${tutorialId}/public${isPreview ? '?preview=1' : ''}`;
-  
+
   const headers = {};
   if (isPreview && config.nonce) {
     headers['X-WP-Nonce'] = config.nonce;
   }
-  
+
   const response = await fetch(url, { headers });
-  
+
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     throw new Error(error.message || "Tutorial not available");
   }
-  
+
   return response.json();
 }
 
@@ -47,43 +55,66 @@ export default function StudentApp() {
   const [tutorial, setTutorial] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+
+  //slideId-aware navigation (replaces index-based currentSlideIndex)
+  const [currentSlideId, setCurrentSlideId] = useState(null);
+
+  //history stack of visited slideIds — used by the Previous button
+  const [historyStack, setHistoryStack] = useState([]);
+
   const [answers, setAnswers] = useState({});
   const [feedback, setFeedback] = useState({});
   const [completed, setCompleted] = useState(false);
 
   const config = getConfig();
 
-  //analytics tracking!!
-  // Track which slideIndex we last fired slide_viewed for, to prevent duplicate fires from re-renders at the same index
-  const lastViewedSlideIndex = useRef(-1);
-  // Tracks whether tutorial_started has fired this session — reset on completion so restarts count
+  //analytics tracking refs
+  const lastViewedSlideId = useRef(null);
   const hasStarted = useRef(false);
 
-  // get the current slide data early so analytics effects can reference it
-  const slides = tutorial?.slides || [];
-  const currentSlide = slides[currentSlideIndex];
+  //derived data (rebuilt when tutorial or currentSlideId changes)
+  const allSlides         = tutorial?.slides || [];
+  const slidesById        = buildSlidesById(allSlides);
+  const regularSlides     = buildRegularSlideOrder(allSlides);
+  const branchChildrenMap = buildBranchChildrenMap(allSlides);
+  const currentSlide      = currentSlideId ? slidesById[currentSlideId] : null;
 
-  // track slide_viewed every time the active slide changes.
-  // also track tutorial_started when slide index 0 is viewed. this just saves us stress and lets us piggy back lol
+  //progress bar indicator 
+  //show progress within regular slides only; branch slides share the root's position
+  const progressInfo = (() => {
+    if (!currentSlide || regularSlides.length === 0) return { current: 0, total: 0 };
+    const total = regularSlides.length;
+
+    if (!currentSlide.isBranchSlide) {
+      const idx = regularSlides.findIndex((s) => s.slideId === currentSlideId);
+      return { current: idx >= 0 ? idx + 1 : 1, total };
+    }
+
+    //for branch slides, find the root regular ancestor for the display position
+    let s = currentSlide;
+    while (s && s.isBranchSlide && s.branchParentSlideId) {
+      s = slidesById[s.branchParentSlideId];
+    }
+    const idx = s ? regularSlides.findIndex((r) => r.slideId === s.slideId) : -1;
+    return { current: idx >= 0 ? idx + 1 : 1, total };
+  })();
+
+  //analytics: slide_viewed / tutorial_started 
   useEffect(() => {
-    if (!tutorial || config.isPreview) return;
-    const slide = slides[currentSlideIndex];
-    if (!slide) return;
-    // only fire once per index change to prevent re render duplicates
-    if (lastViewedSlideIndex.current === currentSlideIndex) return;
-    lastViewedSlideIndex.current = currentSlideIndex;
+    if (!tutorial || config.isPreview || !currentSlideId) return;
+    if (lastViewedSlideId.current === currentSlideId) return;
+    lastViewedSlideId.current = currentSlideId;
 
-    recordAnalyticsEvent(config.tutorialId, 'slide_viewed', slide.slideId);
+    recordAnalyticsEvent(config.tutorialId, 'slide_viewed', currentSlideId);
 
-    // Fire tutorial_started only once per session (resets after completion so restarts count)
-    if (currentSlideIndex === 0 && !hasStarted.current) {
+    // fire tutorial_started the first time we land on any slide this session
+    if (!hasStarted.current) {
       hasStarted.current = true;
       recordAnalyticsEvent(config.tutorialId, 'tutorial_started');
     }
-  }, [currentSlideIndex, tutorial, config.tutorialId, config.isPreview]);
+  }, [currentSlideId, tutorial, config.tutorialId, config.isPreview]);
 
-  // Load tutorial on mount
+  //load tutorial on mount 
   useEffect(() => {
     async function loadTutorial() {
       if (!config.tutorialId) {
@@ -94,11 +125,13 @@ export default function StudentApp() {
 
       try {
         const data = await fetchTutorial(config.tutorialId);
-        // Sort slides by order
         if (data.slides) {
           data.slides.sort((a, b) => (a.order || 0) - (b.order || 0));
         }
         setTutorial(data);
+        // Initialize to the first regular slide
+        const firstId = getFirstSlideId(data.slides || []);
+        setCurrentSlideId(firstId);
       } catch (err) {
         setError(err.message);
       } finally {
@@ -109,145 +142,193 @@ export default function StudentApp() {
     loadTutorial();
   }, [config.tutorialId]);
 
-  // derive slide navigation state (slides/currentSlide already declared above for analytics)
-  const isFirstSlide = currentSlideIndex === 0;
-  const isLastSlide = currentSlideIndex === slides.length - 1;
+  //navigation state
+  const isFirstSlide = historyStack.length === 0;
 
-  // Check if current slide has required question that must be answered correctly
+  // Show "Complete" when the next action would end the tutorial.
+  // For regular slides: last in order with no branch children.
+  // For branch slides: speculatively run the navigation engine to check.
+  const showCompleteButton = (() => {
+    if (!currentSlide) return false;
+    if (currentSlide.isBranchSlide) {
+      const { completed } = getNextSlideId({
+        currentSlide,
+        allSlides,
+        answerState:   answers,
+        feedbackState: feedback,
+      });
+      return completed;
+    }
+    const idx = regularSlides.findIndex((s) => s.slideId === currentSlideId);
+    if (idx !== regularSlides.length - 1) return false;
+    return (branchChildrenMap[currentSlideId] || []).length === 0;
+  })();
+
+  // question helpers 
   const hasRequiredQuestion = () => {
     if (!currentSlide) return false;
-    
     const leftPane = currentSlide.leftPane;
     if (!leftPane) return false;
-    
-    //incase the author still refuses to select a correct answer
+
     if (leftPane.type === "question") {
-      // If no correct option is configured, don't block the student
       if (!leftPane.data?.correctOptionId) return false;
       return leftPane.data?.required !== false;
     }
-    
     if (leftPane.type === "textQuestion") {
-      // If no correct answer is configured, don't block the student
-      // Support both legacy correctAnswer and new correctAnswers array
-      const answers = leftPane.data?.correctAnswers || (leftPane.data?.correctAnswer ? [leftPane.data.correctAnswer] : []);
-      if (!answers.some((a) => a?.trim())) return false;
+      const ans = leftPane.data?.correctAnswers
+        || (leftPane.data?.correctAnswer ? [leftPane.data.correctAnswer] : []);
+      if (!ans.some((a) => a?.trim())) return false;
       return leftPane.data?.required !== false;
     }
-    
     return false;
   };
 
-  // Check if current slide's question is answered correctly
   const isQuestionAnsweredCorrectly = () => {
     if (!currentSlide) return true;
-    
-    const slideId = currentSlide.slideId;
+    const slideId  = currentSlide.slideId;
     const leftPane = currentSlide.leftPane;
-    
     if (!leftPane) return true;
-    
+
     if (leftPane.type === "question") {
-      // MCQ
-      const answer = answers[slideId];
-      const correctId = leftPane.data?.correctOptionId;
-      return answer === correctId;
+      return answers[slideId] === leftPane.data?.correctOptionId;
     }
-    
     if (leftPane.type === "textQuestion") {
-      // Text question — match against any of the accepted correct answers
       return isTextAnswerCorrect(answers[slideId], leftPane.data);
     }
-    
     return true;
   };
 
-  // Can proceed to next slide?
-  const canProceed = () => {
-    if (!hasRequiredQuestion()) return true;
-    return feedback[currentSlide?.slideId]?.correct === true;
-  };
-
-  // Handle answer submission
+  //answer submission
   const handleSubmitAnswer = () => {
     if (!currentSlide) return;
-    
-    const slideId = currentSlide.slideId;
-    const leftPane = currentSlide.leftPane;
-    const isCorrect = isQuestionAnsweredCorrectly();
-    
-    const feedbackData = leftPane.data?.feedback || {};
-    
+    const slideId      = currentSlide.slideId;
+    const leftPane     = currentSlide.leftPane;
+    const isCorrect    = isQuestionAnsweredCorrectly();
+    const feedbackData = leftPane?.data?.feedback || {};
+
     setFeedback((prev) => ({
       ...prev,
       [slideId]: {
         correct: isCorrect,
-        message: isCorrect 
-          ? (feedbackData.correct || "Correct!") 
+        message: isCorrect
+          ? (feedbackData.correct   || "Correct!")
           : (feedbackData.incorrect || "That's not quite right. Please try again."),
       },
     }));
   };
 
-  // Handle navigation
+  // previous (history-based) 
   const handlePrevious = () => {
-    if (!isFirstSlide) {
-      setCurrentSlideIndex((prev) => prev - 1);
-    }
+    if (historyStack.length === 0) return;
+    const prev  = historyStack[historyStack.length - 1];
+    const rest  = historyStack.slice(0, -1);
+    setCurrentSlideId(prev);
+    setHistoryStack(rest);
   };
 
+  // next/complete 
   const handleNext = () => {
-    // If there's a required question that hasn't been answered correctly yet
-    if (hasRequiredQuestion() && !feedback[currentSlide?.slideId]?.correct) {
-      // Check if an answer has been selected
-      if (!answers[currentSlide?.slideId]) {
-        return; // Can't proceed without selecting an answer
-      }
-      // Submit the answer and show feedback
-      const slideId = currentSlide.slideId;
-      const leftPane = currentSlide.leftPane;
-      const isCorrect = isQuestionAnsweredCorrectly();
-      
-      const feedbackData = leftPane.data?.feedback || {};
-      
-      setFeedback((prev) => ({
-        ...prev,
-        [slideId]: {
-          correct: isCorrect,
-          message: isCorrect 
-            ? (feedbackData.correct || "Correct!") 
-            : (feedbackData.incorrect || "That's not quite right. Please try again."),
-        },
-      }));
-      
-      // If incorrect, don't proceed
+    if (!currentSlide) return;
+
+    const slideId  = currentSlide.slideId;
+    const leftPane = currentSlide.leftPane;
+
+    // Required question: must answer correctly before proceeding
+    if (hasRequiredQuestion() && !feedback[slideId]?.correct) {
+      if (!answers[slideId]) return; // no answer selected yet
+
+      // Auto-submit the answer
+      const isCorrect    = isQuestionAnsweredCorrectly();
+      const feedbackData = leftPane?.data?.feedback || {};
+      const newFeedback  = {
+        correct: isCorrect,
+        message: isCorrect
+          ? (feedbackData.correct   || "Correct!")
+          : (feedbackData.incorrect || "That's not quite right. Please try again."),
+      };
+      setFeedback((prev) => ({ ...prev, [slideId]: newFeedback }));
+
       if (!isCorrect) {
+        // Check whether a branch slide matches this wrong answer
+        const childBranches = branchChildrenMap[slideId] || [];
+        const matchedBranch = evaluateBranchMatch({
+          currentSlide,
+          answerState:   answers,
+          feedbackState: { ...feedback, [slideId]: newFeedback },
+          childBranches,
+        });
+
+        if (matchedBranch) {
+          // Navigate into the matching branch slide
+          if (!config.isPreview) {
+            recordAnalyticsEvent(config.tutorialId, 'slide_proceeded', slideId);
+          }
+          setHistoryStack((prev) => [...prev, slideId]);
+          setCurrentSlideId(matchedBranch.slideId);
+        }
+        // No matching branch — stay on slide so the student can try again
         return;
       }
-    }
-    
-    // Proceed to next slide or complete tut
-    // track slide_proceeded for the current slide ie the user moved to the next slide
-    if (currentSlide && !config.isPreview) {
-      recordAnalyticsEvent(config.tutorialId, 'slide_proceeded', currentSlide.slideId);
 
-      // some more piggybacking. the last slide indicates that the tutorial is complete
-      if (isLastSlide) {
-        recordAnalyticsEvent(config.tutorialId, 'tutorial_completed');
-        // Reset so a restart fires a new tutorial_started
-        hasStarted.current = false;
-        lastViewedSlideIndex.current = -1;
-      }
+      // Correct: re-evaluate with updated feedback state inline
+      const updatedFeedback = { ...feedback, [slideId]: newFeedback };
+      navigateNext(updatedFeedback);
+      return;
     }
 
-    if (isLastSlide) {
-      setCompleted(true);
-    } else {
-      setCurrentSlideIndex((prev) => prev + 1);
-    }
+    navigateNext(feedback);
   };
 
-  // Render loading state
+  // Shared navigation logic — separated so handleNext can pass fresh feedback state
+  const navigateNext = (currentFeedback) => {
+    if (!currentSlide) return;
+
+    const slideId  = currentSlide.slideId;
+    const leftPane = currentSlide.leftPane;
+
+    // For non-required question slides the student may have selected an answer
+    // without ever submitting (no feedback entry). Without this, evaluateBranchMatch
+    // would see feedback[slideId] === undefined → isCorrect = false and fire an
+    // "incorrect" branch even when the student answered correctly.
+    let feedbackForEval = currentFeedback;
+    if (!feedbackForEval[slideId] &&
+        (leftPane?.type === 'question' || leftPane?.type === 'textQuestion')) {
+      feedbackForEval = {
+        ...currentFeedback,
+        [slideId]: { correct: isQuestionAnsweredCorrectly() },
+      };
+    }
+
+    // Analytics: slide_proceeded
+    if (!config.isPreview) {
+      recordAnalyticsEvent(config.tutorialId, 'slide_proceeded', slideId);
+    }
+
+    // Determine next slide using the branch-aware engine
+    const { slideId: nextId, completed: willComplete } = getNextSlideId({
+      currentSlide,
+      allSlides,
+      answerState:   answers,
+      feedbackState: feedbackForEval,
+    });
+
+    if (willComplete || !nextId) {
+      // Tutorial complete
+      if (!config.isPreview) {
+        recordAnalyticsEvent(config.tutorialId, 'tutorial_completed');
+        hasStarted.current          = false;
+        lastViewedSlideId.current   = null;
+      }
+      setCompleted(true);
+      return;
+    }
+
+    // push the current slide onto history stack and navigate forward
+    setHistoryStack((prev) => [...prev, slideId]);
+    setCurrentSlideId(nextId);
+  };
+
+  // render states
   if (loading) {
     return (
       <div style={styles.loadingContainer}>
@@ -257,32 +338,29 @@ export default function StudentApp() {
     );
   }
 
-  // Render error state
   if (error) {
     return (
       <div style={styles.errorContainer}>
         <h1 style={styles.errorTitle}>Tutorial Unavailable</h1>
         <p style={styles.errorMessage}>{error}</p>
-        <a href={config.homeUrl} style={styles.errorLink}>
-          Return to Home
-        </a>
+        <a href={config.homeUrl} style={styles.errorLink}>Return to Home</a>
       </div>
     );
   }
 
-  // Render completion screen
   if (completed) {
     return (
       <div style={styles.completionContainer}>
         <h1 style={styles.completionTitle}>Tutorial Complete!</h1>
         <p style={styles.completionMessage}>
-          Good Job! You've completed {tutorial.title}.
+          Good Job! You&apos;ve completed {tutorial.title}.
         </p>
         <div style={styles.completionActions}>
           <button
             onClick={() => {
               setCompleted(false);
-              setCurrentSlideIndex(0);
+              setHistoryStack([]);
+              setCurrentSlideId(getFirstSlideId(allSlides));
               setAnswers({});
               setFeedback({});
             }}
@@ -290,15 +368,13 @@ export default function StudentApp() {
           >
             Restart Tutorial
           </button>
-          <a href={config.homeUrl} style={styles.homeLink}>
-            Return to Home
-          </a>
+          <a href={config.homeUrl} style={styles.homeLink}>Return to Home</a>
         </div>
       </div>
     );
   }
 
-  // Render tutorial playback
+  // ── Main playback render ─────────────────────────────────────────────────
   return (
     <div style={styles.container}>
       {/* Header */}
@@ -308,7 +384,7 @@ export default function StudentApp() {
         </div>
         <div style={styles.headerRight}>
           <span style={styles.progress}>
-            Slide {currentSlideIndex + 1} of {slides.length}
+            Slide {progressInfo.current} of {progressInfo.total}
           </span>
         </div>
       </header>
@@ -318,7 +394,9 @@ export default function StudentApp() {
         <div
           style={{
             ...styles.progressBar,
-            width: `${((currentSlideIndex + 1) / slides.length) * 100}%`,
+            width: progressInfo.total > 0
+              ? `${(progressInfo.current / progressInfo.total) * 100}%`
+              : '0%',
           }}
         />
       </div>
@@ -327,17 +405,18 @@ export default function StudentApp() {
       <main style={styles.main}>
         {currentSlide && (
           <div style={styles.slideContainer}>
-            <h2 style={styles.slideTitle}>{currentSlide.title || `Slide ${currentSlideIndex + 1}`}</h2>
-            
+            <h2 style={styles.slideTitle}>
+              {currentSlide.title || `Slide ${progressInfo.current}`}
+            </h2>
+
             <div style={styles.panesContainer}>
               {/* Left Pane */}
               <div style={styles.pane}>
-                {renderPane(currentSlide.leftPane, currentSlide.slideId, "left")}
+                {renderPane(currentSlide.leftPane, currentSlide.slideId)}
               </div>
-              
               {/* Right Pane */}
               <div style={styles.pane}>
-                {renderPane(currentSlide.rightPane, currentSlide.slideId, "right")}
+                {renderPane(currentSlide.rightPane, currentSlide.slideId)}
               </div>
             </div>
 
@@ -347,11 +426,10 @@ export default function StudentApp() {
                 style={{
                   ...styles.feedback,
                   backgroundColor: feedback[currentSlide.slideId].correct ? "#f0fdf4" : "#fef2f2",
-                  borderColor: feedback[currentSlide.slideId].correct ? "#bbf7d0" : "#fecaca",
-                  color: feedback[currentSlide.slideId].correct ? "#166534" : "#991b1b",
+                  borderColor:     feedback[currentSlide.slideId].correct ? "#bbf7d0" : "#fecaca",
+                  color:           feedback[currentSlide.slideId].correct ? "#166534" : "#991b1b",
                 }}
               >
-                {feedback[currentSlide.slideId].correct ? " " : " "}
                 {feedback[currentSlide.slideId].message}
               </div>
             )}
@@ -361,16 +439,12 @@ export default function StudentApp() {
 
       {/* Navigation */}
       <footer style={styles.footer}>
-        {/* Only show Previous button if not on first slide */}
         {!isFirstSlide ? (
-          <button
-            onClick={handlePrevious}
-            style={styles.navButton}
-          >
+          <button onClick={handlePrevious} style={styles.navButton}>
             Previous
           </button>
         ) : (
-          <div style={{ width: "100px" }}></div> /* Spacer to keep layout balanced */
+          <div style={{ width: "100px" }} />
         )}
 
         <button
@@ -380,20 +454,18 @@ export default function StudentApp() {
             ...styles.navButton,
             ...styles.nextButton,
             opacity: (hasRequiredQuestion() && !answers[currentSlide?.slideId]) ? 0.5 : 1,
-            cursor: (hasRequiredQuestion() && !answers[currentSlide?.slideId]) ? "not-allowed" : "pointer",
+            cursor:  (hasRequiredQuestion() && !answers[currentSlide?.slideId]) ? "not-allowed" : "pointer",
           }}
         >
-          {isLastSlide ? "Complete" : "Next"}
+          {showCompleteButton ? "Complete" : "Next"}
         </button>
       </footer>
     </div>
   );
 
-  // Render pane content
-  function renderPane(pane, slideId, side) {
-    if (!pane) {
-      return <div style={styles.emptyPane}>No content</div>;
-    }
+  //pane renderers
+  function renderPane(pane, slideId) {
+    if (!pane) return <div style={styles.emptyPane}>No content</div>;
 
     switch (pane.type) {
       case "text":
@@ -403,28 +475,21 @@ export default function StudentApp() {
             dangerouslySetInnerHTML={{ __html: pane.data?.content || "" }}
           />
         );
-
       case "question":
         return renderMCQ(pane.data, slideId);
-
       case "textQuestion":
         return renderTextQuestion(pane.data, slideId);
-
       case "media":
         return renderMedia(pane.data);
-
       case "embed":
         return renderEmbed(pane.data);
-
       default:
         return <div style={styles.emptyPane}>Unknown content type</div>;
     }
   }
 
-  // Render MCQ
   function renderMCQ(data, slideId) {
     if (!data) return null;
-
     return (
       <div style={styles.questionContainer}>
         <h3 style={styles.questionTitle}>{data.questionTitle}</h3>
@@ -441,7 +506,7 @@ export default function StudentApp() {
               style={{
                 ...styles.optionLabel,
                 backgroundColor: answers[slideId] === option.id ? "#f3f4f6" : "transparent",
-                borderColor: answers[slideId] === option.id ? "#7B2D26" : "#d1d5db",
+                borderColor:     answers[slideId] === option.id ? "#7B2D26"  : "#d1d5db",
               }}
             >
               <input
@@ -451,11 +516,10 @@ export default function StudentApp() {
                 checked={answers[slideId] === option.id}
                 onChange={() => {
                   setAnswers((prev) => ({ ...prev, [slideId]: option.id }));
-                  // Clear feedback when answer changes
                   setFeedback((prev) => {
-                    const newFeedback = { ...prev };
-                    delete newFeedback[slideId];
-                    return newFeedback;
+                    const n = { ...prev };
+                    delete n[slideId];
+                    return n;
                   });
                 }}
                 style={styles.radioInput}
@@ -469,10 +533,8 @@ export default function StudentApp() {
     );
   }
 
-  // Render text question
   function renderTextQuestion(data, slideId) {
     if (!data) return null;
-
     return (
       <div style={styles.questionContainer}>
         <h3 style={styles.questionTitle}>{data.questionTitle}</h3>
@@ -488,11 +550,10 @@ export default function StudentApp() {
           value={answers[slideId] || ""}
           onChange={(e) => {
             setAnswers((prev) => ({ ...prev, [slideId]: e.target.value }));
-            // Clear feedback when answer changes
             setFeedback((prev) => {
-              const newFeedback = { ...prev };
-              delete newFeedback[slideId];
-              return newFeedback;
+              const n = { ...prev };
+              delete n[slideId];
+              return n;
             });
           }}
           disabled={feedback[slideId]?.correct}
@@ -502,11 +563,8 @@ export default function StudentApp() {
     );
   }
 
-  // Render media
   function renderMedia(data) {
-    if (!data?.url) {
-      return <div style={styles.emptyPane}>No media</div>;
-    }
+    if (!data?.url) return <div style={styles.emptyPane}>No media</div>;
 
     if (data.mediaType === "image") {
       return (
@@ -517,7 +575,6 @@ export default function StudentApp() {
         />
       );
     }
-
     if (data.mediaType === "video") {
       return (
         <video src={data.url} controls style={styles.mediaVideo}>
@@ -525,26 +582,17 @@ export default function StudentApp() {
         </video>
       );
     }
-
     return <div style={styles.emptyPane}>Unsupported media type</div>;
   }
 
-  // Render embed
   function renderEmbed(data) {
-    if (!data?.url) {
-      return <div style={styles.emptyPane}>No embed URL</div>;
-    }
+    if (!data?.url) return <div style={styles.emptyPane}>No embed URL</div>;
 
-    // convert regular youTube watch URLs to embed URLs
     let embedUrl = data.url;
-    
-    // youTube watch URL: https://www.youtube.com/watch?v=VIDEO_ID
-    const youtubeWatchMatch = embedUrl.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
-    if (youtubeWatchMatch) {
-      embedUrl = `https://www.youtube.com/embed/${youtubeWatchMatch[1]}`;
+    const youtubeMatch = embedUrl.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/);
+    if (youtubeMatch) {
+      embedUrl = `https://www.youtube.com/embed/${youtubeMatch[1]}`;
     }
-    
-    // Vimeo URL: https://vimeo.com/VIDEO_ID
     const vimeoMatch = embedUrl.match(/vimeo\.com\/(\d+)/);
     if (vimeoMatch && !embedUrl.includes('player.vimeo.com')) {
       embedUrl = `https://player.vimeo.com/video/${vimeoMatch[1]}`;
@@ -560,10 +608,10 @@ export default function StudentApp() {
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
         />
         <div style={styles.embedFallback}>
-          <span>Can't see the content above?</span>
-          <a 
-            href={data.url} 
-            target="_blank" 
+          <span>Can&apos;t see the content above?</span>
+          <a
+            href={data.url}
+            target="_blank"
             rel="noopener noreferrer"
             style={styles.embedFallbackLink}
           >
@@ -575,9 +623,7 @@ export default function StudentApp() {
   }
 }
 
-// Styles
 const styles = {
-  // Loading
   loadingContainer: {
     display: "flex",
     flexDirection: "column",
@@ -595,8 +641,6 @@ const styles = {
     borderRadius: "50%",
     animation: "spin 1s linear infinite",
   },
-
-  // Error
   errorContainer: {
     display: "flex",
     flexDirection: "column",
@@ -605,10 +649,6 @@ const styles = {
     minHeight: "100vh",
     padding: "24px",
     textAlign: "center",
-  },
-  errorIcon: {
-    fontSize: "64px",
-    marginBottom: "16px",
   },
   errorTitle: {
     fontSize: "24px",
@@ -626,8 +666,6 @@ const styles = {
     textDecoration: "none",
     fontWeight: "500",
   },
-
-  // Completion
   completionContainer: {
     display: "flex",
     flexDirection: "column",
@@ -637,10 +675,6 @@ const styles = {
     padding: "24px",
     textAlign: "center",
     backgroundColor: "#f9fafb",
-  },
-  completionIcon: {
-    fontSize: "80px",
-    marginBottom: "24px",
   },
   completionTitle: {
     fontSize: "32px",
@@ -679,16 +713,12 @@ const styles = {
     borderRadius: "8px",
     textDecoration: "none",
   },
-
-  // Main container
   container: {
     display: "flex",
     flexDirection: "column",
     minHeight: "100vh",
     backgroundColor: "#f9fafb",
   },
-
-  // Header
   header: {
     display: "flex",
     justifyContent: "space-between",
@@ -697,9 +727,7 @@ const styles = {
     backgroundColor: "white",
     borderBottom: "1px solid #e5e7eb",
   },
-  headerLeft: {
-    flex: 1,
-  },
+  headerLeft: { flex: 1 },
   headerRight: {
     display: "flex",
     alignItems: "center",
@@ -715,8 +743,6 @@ const styles = {
     color: "#6b7280",
     fontWeight: "500",
   },
-
-  // Progress bar
   progressBarContainer: {
     height: "4px",
     backgroundColor: "#e5e7eb",
@@ -726,8 +752,6 @@ const styles = {
     backgroundColor: "#7B2D26",
     transition: "width 0.3s ease",
   },
-
-  // Main
   main: {
     flex: 1,
     padding: "32px 24px",
@@ -735,8 +759,6 @@ const styles = {
     width: "100%",
     margin: "0 auto",
   },
-
-  // Slide
   slideContainer: {
     backgroundColor: "white",
     borderRadius: "12px",
@@ -749,16 +771,12 @@ const styles = {
     color: "#111827",
     marginBottom: "24px",
   },
-
-  // Panes - 30/70 ratio for left (quiz) / right (content)
   panesContainer: {
     display: "grid",
     gridTemplateColumns: "30% 70%",
     gap: "32px",
   },
-  pane: {
-    minHeight: "200px",
-  },
+  pane: { minHeight: "200px" },
   emptyPane: {
     display: "flex",
     alignItems: "center",
@@ -767,14 +785,10 @@ const styles = {
     color: "#9ca3af",
     fontStyle: "italic",
   },
-
-  // Text content
   textContent: {
     lineHeight: "1.7",
     color: "#374151",
   },
-
-  // Question
   questionContainer: {
     display: "flex",
     flexDirection: "column",
@@ -818,8 +832,6 @@ const styles = {
     outline: "none",
     width: "100%",
   },
-
-  // Feedback
   feedback: {
     marginTop: "24px",
     padding: "16px",
@@ -828,8 +840,6 @@ const styles = {
     fontSize: "15px",
     fontWeight: "500",
   },
-
-  // Media
   mediaImage: {
     maxWidth: "100%",
     maxHeight: "400px",
@@ -841,8 +851,6 @@ const styles = {
     maxHeight: "400px",
     borderRadius: "8px",
   },
-
-  // Embed
   embedContainer: {
     display: "flex",
     flexDirection: "column",
@@ -873,8 +881,6 @@ const styles = {
     fontWeight: "500",
     textDecoration: "none",
   },
-
-  // Footer
   footer: {
     display: "flex",
     justifyContent: "space-between",
@@ -898,15 +904,5 @@ const styles = {
     backgroundColor: "#7B2D26",
     color: "white",
     borderColor: "#7B2D26",
-  },
-  submitButton: {
-    padding: "12px 24px",
-    fontSize: "15px",
-    fontWeight: "600",
-    backgroundColor: "#059669",
-    color: "white",
-    border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
   },
 };

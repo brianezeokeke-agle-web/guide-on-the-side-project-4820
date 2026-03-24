@@ -1,4 +1,7 @@
 // Slide validation helpers used to guard against publishing incomplete tutorials.
+// Branch-config validation is provided by branchHelpers.js and re-exported here
+// so callers can import from one place.
+export { validateBranchConfig } from './branchHelpers';
 
 // Returns true if a pane is null, has no type, or is missing type-specific content.
 export function isPaneEmpty(pane) {

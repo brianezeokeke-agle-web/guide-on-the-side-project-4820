@@ -166,6 +166,9 @@ function gots_validate_branch_configs($slides) {
             if ($operator !== 'isNot' || $matchType !== 'correctness' || $correct !== 'correct') {
                 $errors[] = sprintf('Slide "%s": text question sources only support "is not correct" branching.', $sid);
             }
+            if ($optionId !== null) {
+                $errors[] = sprintf('Slide "%s": correctness-based branches must not have an optionId set.', $sid);
+            }
         } elseif ($source_type === 'question') {
             if ($operator === 'is') {
                 if ($matchType !== 'option' || empty($optionId)) {
@@ -185,6 +188,9 @@ function gots_validate_branch_configs($slides) {
             } elseif ($operator === 'isNot') {
                 if ($matchType !== 'correctness' || $correct !== 'correct') {
                     $errors[] = sprintf('Slide "%s": MCQ "is not" operator must use correctness="correct".', $sid);
+                }
+                if ($optionId !== null) {
+                    $errors[] = sprintf('Slide "%s": correctness-based branches must not have an optionId set.', $sid);
                 }
             } else {
                 $errors[] = sprintf('Slide "%s": invalid branch operator "%s".', $sid, $operator);

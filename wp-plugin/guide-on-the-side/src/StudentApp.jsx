@@ -283,7 +283,21 @@ export default function StudentApp() {
   const navigateNext = (currentFeedback) => {
     if (!currentSlide) return;
 
-    const slideId = currentSlide.slideId;
+    const slideId  = currentSlide.slideId;
+    const leftPane = currentSlide.leftPane;
+
+    // For non-required question slides the student may have selected an answer
+    // without ever submitting (no feedback entry). Without this, evaluateBranchMatch
+    // would see feedback[slideId] === undefined → isCorrect = false and fire an
+    // "incorrect" branch even when the student answered correctly.
+    let feedbackForEval = currentFeedback;
+    if (!feedbackForEval[slideId] &&
+        (leftPane?.type === 'question' || leftPane?.type === 'textQuestion')) {
+      feedbackForEval = {
+        ...currentFeedback,
+        [slideId]: { correct: isQuestionAnsweredCorrectly() },
+      };
+    }
 
     // Analytics: slide_proceeded
     if (!config.isPreview) {
@@ -295,7 +309,7 @@ export default function StudentApp() {
       currentSlide,
       allSlides,
       answerState:   answers,
-      feedbackState: currentFeedback,
+      feedbackState: feedbackForEval,
     });
 
     if (willComplete || !nextId) {

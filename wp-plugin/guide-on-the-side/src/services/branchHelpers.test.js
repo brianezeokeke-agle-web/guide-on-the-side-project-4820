@@ -812,6 +812,15 @@ describe('validateBranchConfig', () => {
     expect(errors.length).toBeGreaterThan(0);
   });
 
+  test('errors when text question branch has a non-null optionId', () => {
+    const slide = {
+      ...branchText,
+      branchConfig: { sourceSlideId: 's2', operator: 'isNot', matchType: 'correctness', optionId: 'a', correctness: 'correct' },
+    };
+    const errors = validateBranchConfig(slide, allSlides);
+    expect(errors.some((e) => /optionId/i.test(e))).toBe(true);
+  });
+
   //MCQ "is" operator 
 
   test('valid MCQ "is" branch passes', () => {
@@ -869,6 +878,15 @@ describe('validateBranchConfig', () => {
     };
     const errors = validateBranchConfig(slide, allSlides);
     expect(errors.length).toBeGreaterThan(0);
+  });
+
+  test('errors when MCQ "isNot" branch has a non-null optionId', () => {
+    const slide = {
+      ...branchGeneric,
+      branchConfig: { ...branchGeneric.branchConfig, optionId: 'a' },
+    };
+    const errors = validateBranchConfig(slide, allSlides);
+    expect(errors.some((e) => /optionId/i.test(e))).toBe(true);
   });
 
   //Invalid operator 

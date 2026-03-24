@@ -355,6 +355,9 @@ export function validateBranchConfig(slide, allSlides) {
     if (cfg.operator !== 'isNot' || cfg.matchType !== 'correctness' || cfg.correctness !== 'correct') {
       errors.push('Text question sources only support "is not correct" branching.');
     }
+    if (cfg.optionId != null) {
+      errors.push('Correctness-based branches must not have an optionId set.');
+    }
   } else if (sourcePane.type === 'question') {
     if (cfg.operator === 'is') {
       if (cfg.matchType !== 'option' || !cfg.optionId) {
@@ -372,6 +375,9 @@ export function validateBranchConfig(slide, allSlides) {
     } else if (cfg.operator === 'isNot') {
       if (cfg.matchType !== 'correctness' || cfg.correctness !== 'correct') {
         errors.push('MCQ "is not" operator must use correctness = "correct".');
+      }
+      if (cfg.optionId != null) {
+        errors.push('Correctness-based branches must not have an optionId set.');
       }
     } else {
       errors.push('Invalid branch operator. Must be "is" or "isNot".');

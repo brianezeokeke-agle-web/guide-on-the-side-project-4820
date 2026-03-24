@@ -736,35 +736,36 @@ function gots_rest_duplicate_tutorial($request) {
     // Write slides JSON directly to the postmeta table to avoid WP meta handling
     // corrupting JSON that contains HTML/escaped quotes (same as slides-merge path).
     global $wpdb;
-    $meta_table = $wpdb->postmeta;
-    $meta_key   = '_gots_slides';
-    $updated = $wpdb->update(
-        $meta_table,
-        array(
-            'meta_value' => $slides_json_to_save,
-        ),
-        array(
-            'post_id'  => $new_post_id,
-            'meta_key' => $meta_key,
-        ),
-        array('%s'),
-        array('%d', '%s')
+    $existing_meta_id = $wpdb->get_var(
+        $wpdb->prepare(
+            "SELECT meta_id FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key = '_gots_slides' LIMIT 1",
+            $new_post_id
+        )
     );
-    if ($updated === 0) {
-        $wpdb->insert(
-            $meta_table,
-            array(
-                'post_id'    => $new_post_id,
-                'meta_key'   => $meta_key,
-                'meta_value' => $slides_json_to_save,
-            ),
+    if ($existing_meta_id) {
+        $saved = $wpdb->update(
+            $wpdb->postmeta,
+            array('meta_value' => $slides_json_to_save),
+            array('meta_id' => $existing_meta_id),
+            array('%s'),
+            array('%d')
+        );
+    } else {
+        $saved = $wpdb->insert(
+            $wpdb->postmeta,
+            array('post_id' => $new_post_id, 'meta_key' => '_gots_slides', 'meta_value' => $slides_json_to_save),
             array('%d', '%s', '%s')
         );
     }
-    // Clear the post meta cache so subsequent reads see the new slides JSON.
-    if (function_exists('wp_cache_delete')) {
-        wp_cache_delete($new_post_id, 'post_meta');
+    if ($saved === false) {
+        return new WP_Error(
+            'duplicate_slides_failed',
+            __('Failed to save slides for the duplicated tutorial.', 'guide-on-the-side'),
+            array('status' => 500)
+        );
     }
+    wp_cache_delete($new_post_id, 'post_meta');
+    clean_post_cache($new_post_id);
 
     // get the created post and return the formatted response
     $new_post = get_post($new_post_id);

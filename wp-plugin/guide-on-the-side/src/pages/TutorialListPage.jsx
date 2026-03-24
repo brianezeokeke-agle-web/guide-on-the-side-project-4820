@@ -32,8 +32,10 @@ export default function TutorialListPage() {
   const [sortBy, setSortBy] = useState("newest");
   const [filterBy, setFilterBy] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [duplicatingId, setDuplicatingId] = useState(null);
   const [shareModal, setShareModal] = useState({ isOpen: false, tutorialId: null, tutorialTitle: '' });
   const dropdownRef = useRef(null);
+  const highlightTimerRef = useRef(null);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -123,16 +125,13 @@ export default function TutorialListPage() {
     const highlight = searchParams.get("highlight");
     if (highlight) {
       setHighlightId(highlight);
-      // clear the query param from URL
       setSearchParams({});
-      // remove highlight after animation
-      setTimeout(() => {
-        setHighlightId(null);
-      }, 1500);
+      clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = setTimeout(() => setHighlightId(null), 1500);
     }
   }, [searchParams, setSearchParams]);
 
-  const toggleDropdown = (e, tutorialId) => {
+const toggleDropdown = (e, tutorialId) => {
     e.stopPropagation(); // prevent page navigation when clicking dropdown
     setOpenDropdownId(openDropdownId === tutorialId ? null : tutorialId);
   };
@@ -264,16 +263,23 @@ export default function TutorialListPage() {
   const handleDuplicate = async (e, tutorialId) => {
     e.stopPropagation();
     setOpenDropdownId(null);
+    if (duplicatingId) return;
 
+    setDuplicatingId(tutorialId);
     try {
       const newTutorial = await duplicateTutorial(tutorialId);
-      // Add the new tutorial to the list and highlight it so the author is immedietly drawn to it
+      // Switch to unpublished view so the new draft copy is always visible,
+      // then highlight it so the author is immediately drawn to it.
+      setFilterBy("unpublished");
       setTutorials((prev) => [newTutorial, ...prev]);
       setHighlightId(newTutorial.tutorialId);
-      setTimeout(() => setHighlightId(null), 1500);
+      clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = setTimeout(() => setHighlightId(null), 1500);
     } catch (err) {
       console.error("Failed to duplicate tutorial", err);
       alert("Failed to create a copy. Please try again.");
+    } finally {
+      setDuplicatingId(null);
     }
   };
 
@@ -447,9 +453,10 @@ export default function TutorialListPage() {
                         )}
                         <button
                           style={styles.dropdownItem}
+                          disabled={duplicatingId === tut.tutorialId}
                           onClick={(e) => handleDuplicate(e, tut.tutorialId)}
                         >
-                          Create a Copy
+                          {duplicatingId === tut.tutorialId ? 'Copying...' : 'Create a Copy'}
                         </button>
                         <button
                           style={styles.dropdownItem}

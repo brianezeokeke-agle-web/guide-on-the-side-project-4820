@@ -364,7 +364,7 @@ describe('Tutorial API Service (WordPress)', () => {
 
   // Verify POST /tutorials/:id/duplicate is called and returns the new tutorial
   test('duplicateTutorial should post to duplicate endpoint and return new tutorial', async () => {
-    const mockDuplicated = { id: 42, title: 'Tutorial 1 (Copy)', status: 'draft' };
+    const mockDuplicated = { tutorialId: '42', title: 'Tutorial 1 (Copy)', status: 'draft' };
     fetch.mockResolvedValueOnce({
       ok: true,
       json: async () => mockDuplicated,
@@ -376,6 +376,33 @@ describe('Tutorial API Service (WordPress)', () => {
       method: 'POST',
     }));
     expect(result).toEqual(mockDuplicated);
+    expect(result.tutorialId).toBe('42');
+  });
+
+  // Verify that branch slide fields (branchParentSlideId, branchConfig.sourceSlideId) are
+  // passed through from the server response unchanged — remapping is done server-side
+  test('duplicateTutorial should pass through branch slide relationships from server response', async () => {
+    const mockDuplicated = {
+      tutorialId: '99',
+      title: 'Branching Tutorial (Copy)',
+      status: 'draft',
+      slides: [
+        { slideId: 'new-a', order: 1, isBranchSlide: false },
+        {
+          slideId: 'new-b',
+          order: 2,
+          isBranchSlide: true,
+          branchParentSlideId: 'new-a',
+          branchConfig: { sourceSlideId: 'new-a', operator: 'isNot', matchType: 'correctness', correctness: 'correct' },
+        },
+      ],
+    };
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockDuplicated });
+
+    const result = await duplicateTutorial(5);
+
+    expect(result.slides[1].branchParentSlideId).toBe('new-a');
+    expect(result.slides[1].branchConfig.sourceSlideId).toBe('new-a');
   });
 
   // Verify duplicateTutorial throws 'Tutorial not found' on a 404 response

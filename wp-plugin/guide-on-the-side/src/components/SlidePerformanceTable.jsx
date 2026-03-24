@@ -102,7 +102,17 @@ export default function SlidePerformanceTable({ data }) {
                   ...(slide.conversionRate < 0.4 && slide.views > 0 ? styles.trLowConversion : {}),
                 }}
               >
-                <td style={{ ...styles.td, color: "#9ca3af" }}>{slide.order}</td>
+                <td style={{ ...styles.td, color: "#9ca3af", whiteSpace: "nowrap" }}>
+                  {slide.order}
+                  {slide.isBranchSlide && (
+                    <span
+                      style={styles.branchAsterisk}
+                      title="This slide is a conditional"
+                    >
+                      *
+                    </span>
+                  )}
+                </td>
                 <td style={styles.td}>{slide.title || `Slide ${slide.order}`}</td>
                 <td style={{ ...styles.td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
                   {slide.views.toLocaleString()}
@@ -201,6 +211,14 @@ const styles = {
     fontSize: "13px",
     color: "#9ca3af",
     marginLeft: "4px",
+  },
+  branchAsterisk: {
+    marginLeft: "3px",
+    color: "#9ca3af",
+    fontWeight: "700",
+    fontSize: "14px",
+    cursor: "help",
+    lineHeight: 1,
   },
   empty: {
     color: "#9ca3af",

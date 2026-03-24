@@ -444,15 +444,39 @@ function gots_rest_update_tutorial($request) {
         return $sanitized;
     }
     
-    // block publishing if any slide has empty content panes
+    // block publishing if any slide has empty content panes or invalid branch configs
     if (isset($sanitized['status']) && $sanitized['status'] === 'publish') {
         $slides_json = get_post_meta($id, '_gots_slides', true);
         $slides = !empty($slides_json) ? json_decode($slides_json, true) : array();
-        if (!is_array($slides) || empty($slides) || gots_has_empty_slides($slides)) {
+        // Merge any incoming slide updates first so all subsequent checks run
+        // against the final state rather than potentially stale stored slides.
+        $slides_to_validate = $slides;
+        if (!empty($sanitized['slides'])) {
+            $slides_to_validate = gots_merge_slides($slides, $sanitized['slides']);
+        }
+        if (!is_array($slides_to_validate) || empty($slides_to_validate) || gots_has_empty_slides($slides_to_validate)) {
             return new WP_Error(
                 'empty_slides',
                 __('Cannot publish: one or more slides have empty content panes. Please fill in all slide content before publishing.', 'guide-on-the-side'),
                 array('status' => 422)
+            );
+        }
+        $regular_slide_count = count(array_filter($slides_to_validate, function($s) {
+            return empty($s['isBranchSlide']);
+        }));
+        if ($regular_slide_count < 2) {
+            return new WP_Error(
+                'insufficient_slides',
+                __('Cannot publish: a tutorial must have at least 2 slides (not counting conditional branch slides).', 'guide-on-the-side'),
+                array('status' => 422)
+            );
+        }
+        $branch_errors = gots_validate_branch_configs($slides_to_validate);
+        if (!empty($branch_errors)) {
+            return new WP_Error(
+                'invalid_branch_config',
+                __('Cannot publish: one or more branch slide configurations are invalid. Please fix all branch conditions before publishing.', 'guide-on-the-side'),
+                array('status' => 422, 'branch_errors' => $branch_errors)
             );
         }
     }
@@ -679,8 +703,21 @@ function gots_rest_duplicate_tutorial($request) {
     }
 
     // assign new UUIDs to each slide so edits to the copy don't clash with the existing tut
+    // build old→new ID map first so branch relationships can be remapped
+    $id_map = array();
+    foreach ($slides as $slide) {
+        $id_map[$slide['slideId']] = gots_generate_uuid();
+    }
     foreach ($slides as &$slide) {
-        $slide['slideId'] = gots_generate_uuid();
+        $slide['slideId'] = $id_map[$slide['slideId']];
+        // remap branch parent reference
+        if (!empty($slide['branchParentSlideId']) && isset($id_map[$slide['branchParentSlideId']])) {
+            $slide['branchParentSlideId'] = $id_map[$slide['branchParentSlideId']];
+        }
+        // remap sourceSlideId inside branchConfig
+        if (!empty($slide['branchConfig']['sourceSlideId']) && isset($id_map[$slide['branchConfig']['sourceSlideId']])) {
+            $slide['branchConfig']['sourceSlideId'] = $id_map[$slide['branchConfig']['sourceSlideId']];
+        }
     }
     unset($slide);
 

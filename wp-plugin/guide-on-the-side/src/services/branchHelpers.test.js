@@ -950,6 +950,32 @@ describe('validateBranchConfig', () => {
     expect(errors.some((e) => /cycle/i.test(e))).toBe(true);
   });
 
+  test('errors on indirect cycle (A → B → C → B)', () => {
+    // slideB and slideC form a cycle between them; slideA points into it.
+    // Validating slideA should detect the cycle while walking its ancestry.
+    const slideB = {
+      slideId: 'cyc_b',
+      order: 11,
+      isBranchSlide: true,
+      branchParentSlideId: 'cyc_c', // B's parent is C — completing the cycle
+      branchConfig: { sourceSlideId: 'cyc_c', operator: 'isNot', matchType: 'correctness', correctness: 'correct', optionId: null },
+      leftPane: mcqSlide.leftPane,
+      rightPane: mcqSlide.rightPane,
+    };
+    const slideC = {
+      slideId: 'cyc_c',
+      order: 12,
+      isBranchSlide: true,
+      branchParentSlideId: 'cyc_b', // C's parent is B
+      branchConfig: { sourceSlideId: 'cyc_b', operator: 'isNot', matchType: 'correctness', correctness: 'correct', optionId: null },
+      leftPane: mcqSlide.leftPane,
+      rightPane: mcqSlide.rightPane,
+    };
+    // Validate slideC — walking its ancestry hits B, then C again (repeat)
+    const errors = validateBranchConfig(slideC, [mcqSlide, slideB, slideC]);
+    expect(errors.some((e) => /cycle/i.test(e))).toBe(true);
+  });
+
   // Valid configurations 
 
   test('all branch fixture slides pass validation', () => {

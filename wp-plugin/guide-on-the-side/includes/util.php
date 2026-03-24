@@ -142,6 +142,7 @@ function gots_validate_branch_configs($slides) {
         $source_id = isset($cfg['sourceSlideId']) ? $cfg['sourceSlideId'] : '';
         if ($source_id !== $pid) {
             $errors[] = sprintf('Slide "%s": sourceSlideId must equal branchParentSlideId (v1 constraint).', $sid);
+            continue;
         }
 
         // source slide must be a question slide (we cant collect input via the rich text editor)

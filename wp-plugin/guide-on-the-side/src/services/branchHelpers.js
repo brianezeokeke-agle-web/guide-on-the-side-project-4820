@@ -403,19 +403,20 @@ export function validateBranchConfig(slide, allSlides) {
     }
   }
 
-  // Cycle detection: walk ancestry to ensure slide is not its own ancestor
-  function isAncestorOf(candidateId, descendantId) {
-    const visited = new Set();
-    let s = slidesById[descendantId];
-    while (s && s.isBranchSlide && s.branchParentSlideId) {
-      if (visited.has(s.slideId)) break;
-      visited.add(s.slideId);
-      if (s.branchParentSlideId === candidateId) return true;
-      s = slidesById[s.branchParentSlideId];
+  // Cycle detection: walk the ancestry chain and error if any slideId is visited twice.
+  // This catches all cycle shapes
+  const visitedIds = new Set();
+  let ancestor = slide;
+  let hasCycle = false;
+  while (ancestor && ancestor.isBranchSlide && ancestor.branchParentSlideId) {
+    if (visitedIds.has(ancestor.slideId)) {
+      hasCycle = true;
+      break;
     }
-    return false;
+    visitedIds.add(ancestor.slideId);
+    ancestor = slidesById[ancestor.branchParentSlideId];
   }
-  if (isAncestorOf(slide.slideId, slide.slideId)) {
+  if (hasCycle) {
     errors.push('Cycle detected in branch configuration. A slide cannot be its own ancestor.');
   }
 

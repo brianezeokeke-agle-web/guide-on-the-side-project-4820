@@ -818,10 +818,13 @@ function BranchConfigEditor({ slide, allSlides, isPublished, onSlidePatch, onBlu
 
   const isBranch = Boolean(slide.isBranchSlide);
 
-  //slides eligible as parents: regular question slides (excluding the current slide)
+  // Eligible parents: regular question slides that appear BEFORE this slide in order
+  // A branch fires after the parent question is answered, so a later slide as parent
+  // is semantically invalid and matches what the UI note already says.
   const eligibleParents = useMemo(
-    () => getEligibleParentSlides(allSlides, slide.slideId),
-    [allSlides, slide.slideId]
+    () => getEligibleParentSlides(allSlides, slide.slideId)
+            .filter((s) => (s.order ?? 0) < (slide.order ?? Infinity)),
+    [allSlides, slide.slideId, slide.order]
   );
   const canBeBranch = eligibleParents.length > 0;
 
@@ -860,7 +863,7 @@ function BranchConfigEditor({ slide, allSlides, isPublished, onSlidePatch, onBlu
     } else {
       patch({ isBranchSlide: false, branchParentSlideId: null, branchConfig: null });
     }
-    onBlur();
+    onBlur?.();
   };
 
   const handleParentChange = (pid) => {
@@ -871,7 +874,7 @@ function BranchConfigEditor({ slide, allSlides, isPublished, onSlidePatch, onBlu
       newCfg = { sourceSlideId: pid, operator: 'isNot', matchType: 'correctness', optionId: null, correctness: 'correct' };
     }
     patch({ branchParentSlideId: pid, branchConfig: newCfg });
-    onBlur();
+    onBlur?.();
   };
 
   const handleOperatorChange = (operator) => {
@@ -883,12 +886,12 @@ function BranchConfigEditor({ slide, allSlides, isPublished, onSlidePatch, onBlu
     } else {
       patch({ branchConfig: { ...cfg, operator: 'isNot', matchType: 'correctness', optionId: null, correctness: 'correct' } });
     }
-    onBlur();
+    onBlur?.();
   };
 
   const handleOptionChange = (optionId) => {
     patch({ branchConfig: { ...cfg, optionId } });
-    onBlur();
+    onBlur?.();
   };
 
   //branch validation errors for inline display
@@ -1960,7 +1963,6 @@ export default function TutorialEditorPage() {
               allSlides={tutorial.slides || []}
               isPublished={isPublished}
               onSlidePatch={(updates) => handleSlidePatch(activeSlide.slideId, updates)}
-              onBlur={() => persistCurrentSlide(activeSlide.slideId)}
             />
 
             {/* done Editing Button */}

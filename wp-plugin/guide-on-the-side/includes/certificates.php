@@ -38,7 +38,7 @@ function gots_create_certificates_table() {
         recipient_name VARCHAR(191) NOT NULL,
         student_identifier_hash VARCHAR(128) NOT NULL,
         verification_token VARCHAR(128) NOT NULL,
-        pdf_path TEXT NOT NULL DEFAULT '',
+        pdf_path TEXT NOT NULL,
         issued_by VARCHAR(32) NOT NULL DEFAULT 'server',
         issued_at DATETIME NOT NULL,
         status VARCHAR(32) NOT NULL DEFAULT 'issued',
@@ -122,16 +122,55 @@ function gots_validate_download_token($token) {
 // ─── Rate limiting ────────────────────────────────────────────────────────────
 
 /**
- * Check whether the current request exceeds issuance rate limits.
+ * Check and increment the issuance rate limit for an IP + tutorial combination.
  *
- * Limits: max 5 certificates per IP per tutorial per hour.
+ * Uses a WP transient keyed by hashed IP + tutorial_id, valid for 1 hour.
+ * Limit: 5 issuances per IP per tutorial per hour.
  *
  * @param int    $tutorial_id
- * @param string $ip  Client IP address.
+ * @param string $ip  Raw client IP address (will be hashed before storage).
  * @return bool  True if within limits, false if rate-limited.
  */
 function gots_check_certificate_rate_limit($tutorial_id, $ip) {
-    // stub — implemented in Commit 5
+    $max      = 5;
+    $window   = HOUR_IN_SECONDS;
+    $ip_hash  = hash('sha256', $ip);
+    $key      = 'gots_cert_rl_' . substr($ip_hash, 0, 16) . '_' . absint($tutorial_id);
+
+    $count = (int) get_transient($key);
+    if ($count >= $max) {
+        return false;
+    }
+
+    // Increment — set or extend the transient
+    if ($count === 0) {
+        set_transient($key, 1, $window);
+    } else {
+        // get_option directly to preserve TTL isn't reliable; just bump the value
+        // (worst case the window resets, which is acceptable for MVP rate limiting)
+        set_transient($key, $count + 1, $window);
+    }
+
+    return true;
+}
+
+/**
+ * Check (and consume) an idempotency key to prevent duplicate rapid issuance.
+ *
+ * A key is considered "used" for 60 seconds after first use.
+ *
+ * @param string $idempotency_key  Client-supplied key (will be hashed).
+ * @return bool  True if the key is fresh (not seen before), false if duplicate.
+ */
+function gots_check_idempotency_key($idempotency_key) {
+    $hashed = hash('sha256', $idempotency_key);
+    $key    = 'gots_cert_idem_' . substr($hashed, 0, 32);
+
+    if (get_transient($key) !== false) {
+        return false; // duplicate request
+    }
+
+    set_transient($key, 1, 60);
     return true;
 }
 

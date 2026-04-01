@@ -21,6 +21,12 @@ if (!defined('ABSPATH')) {
 
 define('GOTS_CERT_DB_VERSION', '1.0.0');
 
+/** Download token TTL in seconds (24 hours). */
+define('GOTS_CERT_DOWNLOAD_TTL', DAY_IN_SECONDS);
+
+/** Completion proof TTL in seconds (15 minutes). */
+define('GOTS_CERT_PROOF_TTL', 15 * MINUTE_IN_SECONDS);
+
 /**
  * Create or upgrade the gots_certificates table.
  * Called on activation and lazily on admin_init.
@@ -66,33 +72,112 @@ function gots_maybe_create_certificates_table() {
 }
 add_action('admin_init', 'gots_maybe_create_certificates_table');
 
+// ─── HMAC signing helpers ─────────────────────────────────────────────────────
+
+/**
+ * Return the plugin-specific signing secret derived from WP AUTH_KEY.
+ *
+ * @return string
+ */
+function gots_cert_signing_secret() {
+    return hash('sha256', AUTH_KEY . 'gots_cert_v1');
+}
+
+/**
+ * Build a URL-safe base64 string from arbitrary data.
+ *
+ * @param string $data
+ * @return string
+ */
+function gots_cert_base64url_encode($data) {
+    return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+}
+
+/**
+ * Decode a URL-safe base64 string.
+ *
+ * @param string $data
+ * @return string|false
+ */
+function gots_cert_base64url_decode($data) {
+    return base64_decode(strtr($data, '-_', '+/'));
+}
+
 // ─── Completion-proof helpers ─────────────────────────────────────────────────
 
 /**
  * Generate a short-lived, signed completion-proof token for a tutorial.
  *
- * The token embeds: tutorial_id, student_identifier_hash, issued timestamp.
- * It is HMAC-signed so the server can verify it without a DB round-trip.
+ * Payload: {tid, sid, iat}  — tutorial ID, student identifier hash, issued-at.
+ * Signed with HMAC-SHA256.  Valid for GOTS_CERT_PROOF_TTL seconds.
  *
  * @param int    $tutorial_id
- * @param string $student_id  Hashed student identifier (IP or user ID hash).
- * @return string  Base64-url-safe token.
+ * @param string $student_id  Hashed student identifier (IP-hash or user-ID-hash).
+ * @return string  Compact token: <base64url-payload>.<base64url-sig>
  */
 function gots_generate_completion_proof($tutorial_id, $student_id) {
-    // stub — implemented in Commit 5
-    return '';
+    $payload = wp_json_encode(array(
+        'tid' => (int) $tutorial_id,
+        'sid' => (string) $student_id,
+        'iat' => time(),
+    ));
+
+    $encoded_payload = gots_cert_base64url_encode($payload);
+    $sig             = gots_cert_base64url_encode(
+        hash_hmac('sha256', $encoded_payload, gots_cert_signing_secret(), true)
+    );
+
+    return $encoded_payload . '.' . $sig;
 }
 
 /**
  * Validate a completion-proof token.
  *
  * @param string $token
- * @param int    $tutorial_id
+ * @param int    $tutorial_id  Expected tutorial ID.
  * @return array|WP_Error  Decoded payload on success, WP_Error on failure.
  */
 function gots_validate_completion_proof($token, $tutorial_id) {
-    // stub — implemented in Commit 5
-    return new WP_Error('not_implemented', 'Completion proof validation not yet implemented.');
+    if (empty($token) || !is_string($token)) {
+        return new WP_Error('invalid_proof', 'Missing completion proof.', array('status' => 400));
+    }
+
+    $parts = explode('.', $token, 2);
+    if (count($parts) !== 2) {
+        return new WP_Error('invalid_proof', 'Malformed completion proof.', array('status' => 400));
+    }
+
+    list($encoded_payload, $provided_sig) = $parts;
+
+    // Verify signature
+    $expected_sig = gots_cert_base64url_encode(
+        hash_hmac('sha256', $encoded_payload, gots_cert_signing_secret(), true)
+    );
+
+    if (!hash_equals($expected_sig, $provided_sig)) {
+        return new WP_Error('invalid_proof', 'Invalid completion proof signature.', array('status' => 403));
+    }
+
+    // Decode payload
+    $json    = gots_cert_base64url_decode($encoded_payload);
+    $payload = json_decode($json, true);
+
+    if (!is_array($payload)) {
+        return new WP_Error('invalid_proof', 'Malformed proof payload.', array('status' => 400));
+    }
+
+    // Check expiry
+    $age = time() - (int) ($payload['iat'] ?? 0);
+    if ($age > GOTS_CERT_PROOF_TTL) {
+        return new WP_Error('proof_expired', 'Completion proof has expired.', array('status' => 403));
+    }
+
+    // Check tutorial ID matches
+    if ((int) ($payload['tid'] ?? 0) !== (int) $tutorial_id) {
+        return new WP_Error('invalid_proof', 'Proof is not valid for this tutorial.', array('status' => 403));
+    }
+
+    return $payload;
 }
 
 // ─── Signed download URL helpers ─────────────────────────────────────────────
@@ -104,8 +189,21 @@ function gots_validate_completion_proof($token, $tutorial_id) {
  * @return array{token: string, expires_at: string}
  */
 function gots_generate_download_token($certificate_id) {
-    // stub — implemented in Commit 5
-    return array('token' => '', 'expires_at' => '');
+    $expires = time() + GOTS_CERT_DOWNLOAD_TTL;
+    $payload = wp_json_encode(array(
+        'cid' => (int) $certificate_id,
+        'exp' => $expires,
+    ));
+
+    $encoded = gots_cert_base64url_encode($payload);
+    $sig     = gots_cert_base64url_encode(
+        hash_hmac('sha256', $encoded, gots_cert_signing_secret(), true)
+    );
+
+    return array(
+        'token'      => $encoded . '.' . $sig,
+        'expires_at' => gmdate('Y-m-d\TH:i:s\Z', $expires),
+    );
 }
 
 /**
@@ -115,8 +213,49 @@ function gots_generate_download_token($certificate_id) {
  * @return object|WP_Error  Certificate row on success, WP_Error on failure.
  */
 function gots_validate_download_token($token) {
-    // stub — implemented in Commit 5
-    return new WP_Error('not_implemented', 'Download token validation not yet implemented.');
+    if (empty($token) || !is_string($token)) {
+        return new WP_Error('invalid_token', 'Missing download token.', array('status' => 400));
+    }
+
+    $parts = explode('.', $token, 2);
+    if (count($parts) !== 2) {
+        return new WP_Error('invalid_token', 'Malformed download token.', array('status' => 400));
+    }
+
+    list($encoded, $provided_sig) = $parts;
+
+    $expected_sig = gots_cert_base64url_encode(
+        hash_hmac('sha256', $encoded, gots_cert_signing_secret(), true)
+    );
+
+    if (!hash_equals($expected_sig, $provided_sig)) {
+        return new WP_Error('invalid_token', 'Invalid download token signature.', array('status' => 403));
+    }
+
+    $json    = gots_cert_base64url_decode($encoded);
+    $payload = json_decode($json, true);
+
+    if (!is_array($payload)) {
+        return new WP_Error('invalid_token', 'Malformed token payload.', array('status' => 400));
+    }
+
+    if (time() > (int) ($payload['exp'] ?? 0)) {
+        return new WP_Error('token_expired', 'Download link has expired.', array('status' => 403));
+    }
+
+    // Fetch the certificate record
+    global $wpdb;
+    $table = $wpdb->prefix . 'gots_certificates';
+    $cert  = $wpdb->get_row($wpdb->prepare(
+        "SELECT * FROM $table WHERE id = %d AND status = 'issued'",
+        absint($payload['cid'])
+    ), OBJECT);
+
+    if (!$cert) {
+        return new WP_Error('cert_not_found', 'Certificate not found.', array('status' => 404));
+    }
+
+    return $cert;
 }
 
 // ─── Rate limiting ────────────────────────────────────────────────────────────
@@ -132,25 +271,17 @@ function gots_validate_download_token($token) {
  * @return bool  True if within limits, false if rate-limited.
  */
 function gots_check_certificate_rate_limit($tutorial_id, $ip) {
-    $max      = 5;
-    $window   = HOUR_IN_SECONDS;
-    $ip_hash  = hash('sha256', $ip);
-    $key      = 'gots_cert_rl_' . substr($ip_hash, 0, 16) . '_' . absint($tutorial_id);
+    $max     = 5;
+    $window  = HOUR_IN_SECONDS;
+    $ip_hash = hash('sha256', $ip);
+    $key     = 'gots_cert_rl_' . substr($ip_hash, 0, 16) . '_' . absint($tutorial_id);
 
     $count = (int) get_transient($key);
     if ($count >= $max) {
         return false;
     }
 
-    // Increment — set or extend the transient
-    if ($count === 0) {
-        set_transient($key, 1, $window);
-    } else {
-        // get_option directly to preserve TTL isn't reliable; just bump the value
-        // (worst case the window resets, which is acceptable for MVP rate limiting)
-        set_transient($key, $count + 1, $window);
-    }
-
+    set_transient($key, $count + 1, $window);
     return true;
 }
 
@@ -167,11 +298,49 @@ function gots_check_idempotency_key($idempotency_key) {
     $key    = 'gots_cert_idem_' . substr($hashed, 0, 32);
 
     if (get_transient($key) !== false) {
-        return false; // duplicate request
+        return false;
     }
 
     set_transient($key, 1, 60);
     return true;
+}
+
+// ─── Student identifier ───────────────────────────────────────────────────────
+
+/**
+ * Build a hashed, anonymous student identifier for the current request.
+ *
+ * For logged-in users: hash of user ID + salt.
+ * For anonymous users: hash of IP + user-agent + salt.
+ *
+ * @return string  Hex-encoded 64-char hash.
+ */
+function gots_get_student_identifier() {
+    if (is_user_logged_in()) {
+        return hash('sha256', (string) get_current_user_id() . AUTH_SALT);
+    }
+
+    $ip = gots_get_client_ip();
+    $ua = isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '';
+    return hash('sha256', $ip . $ua . AUTH_SALT);
+}
+
+/**
+ * Get the client IP address.
+ *
+ * @return string
+ */
+function gots_get_client_ip() {
+    foreach (array('HTTP_CLIENT_IP', 'HTTP_X_FORWARDED_FOR', 'REMOTE_ADDR') as $key) {
+        if (!empty($_SERVER[$key])) {
+            $ips = explode(',', $_SERVER[$key]);
+            $ip  = trim($ips[0]);
+            if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                return $ip;
+            }
+        }
+    }
+    return '0.0.0.0';
 }
 
 // ─── Issuance ─────────────────────────────────────────────────────────────────
@@ -183,14 +352,142 @@ function gots_check_idempotency_key($idempotency_key) {
  * a signed download URL.
  *
  * @param int    $tutorial_id
- * @param string $recipient_name  Sanitized recipient name.
- * @param string $completion_proof  Short-lived proof token.
+ * @param string $recipient_name   Sanitized recipient name.
+ * @param string $completion_proof Short-lived signed proof token.
  * @param string $student_id       Hashed student identifier.
  * @return array|WP_Error  {certificateId, downloadUrl, expiresAt} or WP_Error.
  */
 function gots_issue_certificate($tutorial_id, $recipient_name, $completion_proof, $student_id) {
-    // stub — implemented in Commit 5
-    return new WP_Error('not_implemented', 'Certificate issuance not yet implemented.');
+    global $wpdb;
+
+    $tutorial_id = absint($tutorial_id);
+
+    // 1. Validate completion proof
+    $proof = gots_validate_completion_proof($completion_proof, $tutorial_id);
+    if (is_wp_error($proof)) {
+        error_log('[GOTS Cert] Proof validation failed for tutorial ' . $tutorial_id . ': ' . $proof->get_error_message());
+        return $proof;
+    }
+
+    // 2. Confirm student_id in proof matches the caller
+    if ((string) ($proof['sid'] ?? '') !== (string) $student_id) {
+        return new WP_Error('proof_mismatch', 'Completion proof is not valid for this student.', array('status' => 403));
+    }
+
+    // 3. Rate limit
+    $ip = gots_get_client_ip();
+    if (!gots_check_certificate_rate_limit($tutorial_id, $ip)) {
+        return new WP_Error('rate_limited', 'Too many certificate requests. Please wait before trying again.', array('status' => 429));
+    }
+
+    // 4. Tutorial exists and is published
+    $post = get_post($tutorial_id);
+    if (!$post || $post->post_type !== 'gots_tutorial' || $post->post_status !== 'publish') {
+        return new WP_Error('tutorial_unavailable', 'Tutorial not available.', array('status' => 404));
+    }
+
+    // 5. Certificate feature is enabled for this tutorial
+    $cert_settings = gots_get_tutorial_cert_settings($tutorial_id);
+    if (empty($cert_settings['enabled'])) {
+        return new WP_Error('cert_disabled', 'Certificates are not enabled for this tutorial.', array('status' => 403));
+    }
+
+    // 6. Idempotency — check if a certificate was already issued for this student + tutorial recently
+    $table       = $wpdb->prefix . 'gots_certificates';
+    $existing    = $wpdb->get_row($wpdb->prepare(
+        "SELECT id, verification_token FROM $table
+         WHERE tutorial_id = %d AND student_identifier_hash = %s
+         ORDER BY issued_at DESC LIMIT 1",
+        $tutorial_id,
+        $student_id
+    ), OBJECT);
+
+    if ($existing) {
+        // Return the existing certificate's download URL
+        $dl       = gots_generate_download_token($existing->id);
+        $rest_url = rest_url('gots/v1/certificates/' . urlencode($dl['token']) . '/download');
+        return array(
+            'certificateId' => (int) $existing->id,
+            'downloadUrl'   => $rest_url,
+            'expiresAt'     => $dl['expires_at'],
+        );
+    }
+
+    // 7. Resolve template and render HTML
+    $template = gots_resolve_tutorial_template($tutorial_id);
+
+    $issuer_name = !empty($cert_settings['issuer_name'])
+        ? $cert_settings['issuer_name']
+        : get_bloginfo('name');
+
+    $verification_token = wp_generate_uuid4();
+
+    $values = array(
+        'recipient_name'  => $recipient_name,
+        'tutorial_title'  => get_the_title($tutorial_id),
+        'completion_date' => current_time('Y-m-d'),
+        'issuer_name'     => $issuer_name,
+        'certificate_id'  => $verification_token,
+    );
+
+    $html = gots_render_certificate_html($template, $values);
+
+    // 8. Render PDF
+    $pdf_bytes = gots_render_pdf($html, array('paper_size' => 'letter', 'orientation' => 'landscape'));
+    if (is_wp_error($pdf_bytes)) {
+        error_log('[GOTS Cert] PDF render failed: ' . $pdf_bytes->get_error_message());
+        return new WP_Error('pdf_error', 'Could not generate certificate PDF.', array('status' => 500));
+    }
+
+    // 9. Save PDF to uploads
+    $filename = 'cert-' . sanitize_file_name($verification_token) . '.pdf';
+    $upload   = gots_get_certificate_upload_path($filename);
+    if (is_wp_error($upload)) {
+        return $upload;
+    }
+
+    if (file_put_contents($upload['path'], $pdf_bytes) === false) {
+        return new WP_Error('write_error', 'Could not save certificate PDF.', array('status' => 500));
+    }
+
+    // 10. Persist the certificate record
+    $issued_by = is_user_logged_in() ? 'user:' . get_current_user_id() : 'anon';
+
+    $inserted = $wpdb->insert(
+        $table,
+        array(
+            'tutorial_id'              => $tutorial_id,
+            'template_id'              => (int) ($template->id ?? 0),
+            'recipient_name'           => $recipient_name,
+            'student_identifier_hash'  => $student_id,
+            'verification_token'       => $verification_token,
+            'pdf_path'                 => $upload['path'],
+            'issued_by'                => $issued_by,
+            'issued_at'                => current_time('mysql'),
+            'status'                   => 'issued',
+            'download_count'           => 0,
+        ),
+        array('%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d')
+    );
+
+    if (!$inserted) {
+        // Clean up the rendered file
+        @unlink($upload['path']);
+        error_log('[GOTS Cert] DB insert failed: ' . $wpdb->last_error);
+        return new WP_Error('db_error', 'Could not save certificate record.', array('status' => 500));
+    }
+
+    $cert_id = (int) $wpdb->insert_id;
+
+    // 11. Generate signed download token
+    $dl       = gots_generate_download_token($cert_id);
+    $rest_url = rest_url('gots/v1/certificates/' . urlencode($dl['token']) . '/download');
+
+    return array(
+        'certificateId' => $cert_id,
+        'downloadUrl'   => $rest_url,
+        'expiresAt'     => $dl['expires_at'],
+    );
 }
 
 // ─── Download streaming ───────────────────────────────────────────────────────
@@ -199,13 +496,42 @@ function gots_issue_certificate($tutorial_id, $recipient_name, $completion_proof
  * Stream a certificate PDF to the browser.
  *
  * Validates the token, increments the download counter, and sends the file.
+ * Calls exit() on success.
  *
  * @param string $token  Signed download token.
- * @return void|WP_Error  Exits on success; WP_Error on failure.
+ * @return WP_Error  Only returned on failure; on success this function exits.
  */
 function gots_stream_certificate_pdf($token) {
-    // stub — implemented in Commit 5
-    return new WP_Error('not_implemented', 'PDF streaming not yet implemented.');
+    global $wpdb;
+
+    $cert = gots_validate_download_token($token);
+    if (is_wp_error($cert)) {
+        return $cert;
+    }
+
+    $pdf_path = $cert->pdf_path;
+    if (!file_exists($pdf_path)) {
+        return new WP_Error('file_not_found', 'Certificate file not found.', array('status' => 404));
+    }
+
+    // Increment download counter
+    $wpdb->query($wpdb->prepare(
+        "UPDATE {$wpdb->prefix}gots_certificates SET download_count = download_count + 1 WHERE id = %d",
+        $cert->id
+    ));
+
+    // Build a safe filename for the Content-Disposition header
+    $filename = 'certificate-' . sanitize_file_name($cert->verification_token) . '.pdf';
+
+    // Stream
+    nocache_headers();
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Content-Length: ' . filesize($pdf_path));
+    header('X-Content-Type-Options: nosniff');
+
+    readfile($pdf_path);
+    exit;
 }
 
 // ─── Admin query helpers ──────────────────────────────────────────────────────
@@ -219,6 +545,18 @@ function gots_stream_certificate_pdf($token) {
  * @return array
  */
 function gots_get_tutorial_certificates($tutorial_id, $limit = 50, $offset = 0) {
-    // stub — implemented in Commit 6
-    return array();
+    global $wpdb;
+
+    $table = $wpdb->prefix . 'gots_certificates';
+    return $wpdb->get_results($wpdb->prepare(
+        "SELECT id, tutorial_id, template_id, recipient_name, verification_token,
+                issued_by, issued_at, status, download_count
+         FROM $table
+         WHERE tutorial_id = %d
+         ORDER BY issued_at DESC
+         LIMIT %d OFFSET %d",
+        absint($tutorial_id),
+        absint($limit),
+        absint($offset)
+    ), ARRAY_A) ?: array();
 }

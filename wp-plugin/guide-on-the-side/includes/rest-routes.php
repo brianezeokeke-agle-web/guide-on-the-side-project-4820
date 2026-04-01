@@ -101,6 +101,30 @@ function gots_register_rest_routes() {
         ),
     ));
 
+    // ── Certificate endpoints ──────────────────────────────────────────────────
+
+    // POST /tutorials/{id}/certificate/issue  — student issues a certificate after completion
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/certificate/issue', array(
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'gots_rest_issue_certificate',
+        'permission_callback' => 'gots_rest_permissions_check_public',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // GET /certificates/{token}/download  — stream a signed PDF
+    register_rest_route($namespace, '/certificates/(?P<token>[A-Za-z0-9._-]+)/download', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_download_certificate',
+        'permission_callback' => 'gots_rest_permissions_check_public',
+        'args'                => array(
+            'token' => array(
+                'validate_callback' => function($p) { return is_string($p) && strlen($p) <= 512; },
+            ),
+        ),
+    ));
+
     //analytics endpoints begin from here
 
     // POST /analytics/event - to record an anonymous analytics event. this needs no auth
@@ -968,4 +992,76 @@ function gots_rest_get_analytics_slides($request) {
     $slides = gots_get_slide_performance($id, $range['date_from'], $range['date_to']);
 
     return rest_ensure_response($slides);
+}
+
+// ── Certificate REST callbacks ─────────────────────────────────────────────────
+
+/**
+ * POST /tutorials/{id}/certificate/issue
+ *
+ * Request body:
+ *   recipientName    string  — display name for the certificate
+ *   completionProof  string  — signed proof token from gotsStudentConfig
+ *   idempotencyKey   string  — (optional) client-supplied dedup key
+ *
+ * @param WP_REST_Request $request
+ * @return WP_REST_Response|WP_Error
+ */
+function gots_rest_issue_certificate($request) {
+    $tutorial_id = absint($request->get_param('id'));
+    $params      = $request->get_json_params() ?: array();
+
+    $recipient_name   = isset($params['recipientName'])   ? sanitize_text_field($params['recipientName'])   : '';
+    $completion_proof = isset($params['completionProof']) ? sanitize_text_field($params['completionProof']) : '';
+    $idempotency_key  = isset($params['idempotencyKey'])  ? sanitize_text_field($params['idempotencyKey'])  : '';
+
+    if (empty($recipient_name)) {
+        return new WP_Error('missing_name', 'recipientName is required.', array('status' => 400));
+    }
+
+    if (empty($completion_proof)) {
+        return new WP_Error('missing_proof', 'completionProof is required.', array('status' => 400));
+    }
+
+    // Optional idempotency check
+    if (!empty($idempotency_key) && !gots_check_idempotency_key($idempotency_key)) {
+        // Duplicate in-flight request — return a 409 so the client can retry after a short delay
+        return new WP_Error('duplicate_request', 'Duplicate issuance request. Please wait a moment and try again.', array('status' => 409));
+    }
+
+    $student_id = gots_get_student_identifier();
+
+    $result = gots_issue_certificate($tutorial_id, $recipient_name, $completion_proof, $student_id);
+
+    if (is_wp_error($result)) {
+        return $result;
+    }
+
+    return rest_ensure_response($result);
+}
+
+/**
+ * GET /certificates/{token}/download
+ *
+ * Streams the certificate PDF to the browser.
+ *
+ * @param WP_REST_Request $request
+ * @return WP_Error  Only on failure; success causes exit via gots_stream_certificate_pdf().
+ */
+function gots_rest_download_certificate($request) {
+    $token = $request->get_param('token');
+
+    if (empty($token)) {
+        return new WP_Error('missing_token', 'Download token is required.', array('status' => 400));
+    }
+
+    $result = gots_stream_certificate_pdf(urldecode($token));
+
+    // If we get here, streaming failed
+    if (is_wp_error($result)) {
+        return $result;
+    }
+
+    // Should not reach here — gots_stream_certificate_pdf exits on success
+    return new WP_Error('stream_error', 'Failed to stream certificate.', array('status' => 500));
 }

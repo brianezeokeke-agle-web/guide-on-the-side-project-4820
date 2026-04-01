@@ -249,7 +249,23 @@ function gots_render_playback_page($tutorial_id, $post, $is_preview = false) {
             // HMAC token scoped to this tutorial — validates that analytics events originate from a real playback page
             'analyticsToken' => hash_hmac('sha256', 'gots_analytics_' . $tutorial_id, wp_salt('auth')),
         );
-        
+
+        // Certificate support: inject a signed completion proof and user display name
+        // The proof is valid for 15 minutes; it is sent back with the issue request
+        // so the server can verify the student reached this page legitimately.
+        $student_id               = gots_get_student_identifier();
+        $config['completionProof'] = gots_generate_completion_proof($tutorial_id, $student_id);
+        $config['certificateEnabled'] = (bool) get_post_meta($tutorial_id, '_gots_certificate_enabled', true);
+
+        if (is_user_logged_in()) {
+            $current_user              = wp_get_current_user();
+            $config['currentUserName'] = $current_user->display_name;
+            $config['isLoggedIn']      = true;
+        } else {
+            $config['currentUserName'] = '';
+            $config['isLoggedIn']      = false;
+        }
+
         // if preview mode, include the WP nonce so the student app can authenticate
         if ($is_preview) {
             $config['nonce'] = wp_create_nonce('wp_rest');

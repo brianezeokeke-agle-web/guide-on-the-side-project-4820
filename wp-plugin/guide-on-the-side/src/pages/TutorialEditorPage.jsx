@@ -4,6 +4,11 @@ import DOMPurify from "dompurify";
 import { getTutorial, updateTutorial } from "../services/tutorialApi";
 import { selectMedia, isMediaLibraryAvailable } from "../services/mediaLibrary";
 import {
+  getTutorialCertSettings,
+  saveTutorialCertSettings,
+  listTemplates,
+} from "../services/certificateTemplateApi";
+import {
   buildBranchChildrenMap,
   buildRegularSlideOrder,
   buildSlidesById,
@@ -1044,6 +1049,12 @@ export default function TutorialEditorPage() {
   const [editingTitleValue, setEditingTitleValue] = useState("");
   const titleInputRef = useRef(null);
 
+  // Certificate settings state
+  const [certSettings, setCertSettings]         = useState({ enabled: false, template_id: null, issuer_name: "" });
+  const [certTemplates, setCertTemplates]       = useState([]);
+  const [certSaving, setCertSaving]             = useState(false);
+  const [certSaveStatus, setCertSaveStatus]     = useState("");
+
   // fetch tutorial on mount
   useEffect(() => {
     const fetchTutorial = async () => {
@@ -1064,6 +1075,18 @@ export default function TutorialEditorPage() {
       }
     };
     fetchTutorial();
+  }, [id]);
+
+  // Load certificate settings and available templates alongside the tutorial
+  useEffect(() => {
+    if (!id) return;
+    Promise.all([
+      getTutorialCertSettings(id).catch(() => null),
+      listTemplates().catch(() => []),
+    ]).then(([settings, templates]) => {
+      if (settings) setCertSettings(settings);
+      if (templates) setCertTemplates(templates);
+    });
   }, [id]);
 
   // get the active slide object
@@ -1356,6 +1379,26 @@ export default function TutorialEditorPage() {
       setTimeout(() => setSaveStatus(""), 2000);
     } catch (err) {
       setSaveStatus("Error saving");
+    }
+  };
+
+  // Save certificate settings for this tutorial
+  const handleSaveCertSettings = async () => {
+    setCertSaving(true);
+    setCertSaveStatus("");
+    try {
+      const saved = await saveTutorialCertSettings(id, {
+        enabled:     certSettings.enabled,
+        templateId:  certSettings.template_id || 0,
+        issuerName:  certSettings.issuer_name || "",
+      });
+      setCertSettings(saved);
+      setCertSaveStatus("Saved");
+      setTimeout(() => setCertSaveStatus(""), 2500);
+    } catch (err) {
+      setCertSaveStatus("Error: " + err.message);
+    } finally {
+      setCertSaving(false);
     }
   };
 
@@ -2010,6 +2053,66 @@ export default function TutorialEditorPage() {
         ) : (
           <p>Select a slide from the sidebar to edit.</p>
         )}
+
+        {/* Certificate Settings Panel */}
+        <div style={styles.certPanel}>
+          <h3 style={styles.certPanelTitle}>Certificate Settings</h3>
+
+          <label style={styles.certPanelLabel}>
+            <input
+              type="checkbox"
+              checked={!!certSettings.enabled}
+              onChange={(e) => setCertSettings((p) => ({ ...p, enabled: e.target.checked }))}
+              style={{ marginRight: "6px" }}
+            />
+            Enable completion certificate for this tutorial
+          </label>
+
+          {certSettings.enabled && (
+            <>
+              <div style={{ marginTop: "12px" }}>
+                <label style={styles.certPanelFieldLabel}>Certificate Template</label>
+                <select
+                  value={certSettings.template_id || ""}
+                  onChange={(e) => setCertSettings((p) => ({ ...p, template_id: e.target.value ? Number(e.target.value) : null }))}
+                  style={styles.certPanelSelect}
+                >
+                  <option value="">— Use default template —</option>
+                  {certTemplates.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ marginTop: "12px" }}>
+                <label style={styles.certPanelFieldLabel}>Issuer Name Override</label>
+                <input
+                  type="text"
+                  value={certSettings.issuer_name || ""}
+                  onChange={(e) => setCertSettings((p) => ({ ...p, issuer_name: e.target.value }))}
+                  placeholder="Leave blank to use site name"
+                  style={styles.certPanelInput}
+                  maxLength={191}
+                />
+              </div>
+            </>
+          )}
+
+          <div style={{ marginTop: "14px", display: "flex", alignItems: "center", gap: "12px" }}>
+            <button
+              onClick={handleSaveCertSettings}
+              disabled={certSaving}
+              style={certSaving ? { ...styles.certSaveButton, opacity: 0.6 } : styles.certSaveButton}
+            >
+              {certSaving ? "Saving…" : "Save Certificate Settings"}
+            </button>
+            {certSaveStatus && (
+              <span style={{ fontSize: "13px", color: certSaveStatus.startsWith("Error") ? "#dc2626" : "#16a34a" }}>
+                {certSaveStatus}
+              </span>
+            )}
+          </div>
+        </div>
       </main>
     </div>
   );
@@ -2820,5 +2923,62 @@ const styles = {
     backgroundColor: "#f3f4f6",
     color: "#6b7280",
     cursor: "default",
+  },
+  // Certificate settings panel
+  certPanel: {
+    margin: "24px 24px 0",
+    padding: "20px",
+    backgroundColor: "white",
+    border: "1px solid #e5e7eb",
+    borderRadius: "10px",
+  },
+  certPanelTitle: {
+    fontSize: "16px",
+    fontWeight: "600",
+    color: "#111827",
+    marginTop: 0,
+    marginBottom: "14px",
+  },
+  certPanelLabel: {
+    display: "flex",
+    alignItems: "center",
+    fontSize: "14px",
+    color: "#374151",
+    cursor: "pointer",
+  },
+  certPanelFieldLabel: {
+    display: "block",
+    fontSize: "13px",
+    fontWeight: "500",
+    color: "#374151",
+    marginBottom: "4px",
+  },
+  certPanelSelect: {
+    width: "100%",
+    padding: "7px 10px",
+    fontSize: "14px",
+    border: "1px solid #d1d5db",
+    borderRadius: "6px",
+    backgroundColor: "white",
+    boxSizing: "border-box",
+  },
+  certPanelInput: {
+    width: "100%",
+    padding: "7px 10px",
+    fontSize: "14px",
+    border: "1px solid #d1d5db",
+    borderRadius: "6px",
+    boxSizing: "border-box",
+    outline: "none",
+  },
+  certSaveButton: {
+    padding: "8px 16px",
+    fontSize: "13px",
+    fontWeight: "600",
+    backgroundColor: "#7B2D26",
+    color: "white",
+    border: "none",
+    borderRadius: "6px",
+    cursor: "pointer",
   },
 };

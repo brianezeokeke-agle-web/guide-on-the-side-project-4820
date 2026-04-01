@@ -28,6 +28,15 @@ export default function Sidebar() {
       >
         My Tutorials
       </Link>
+      <Link
+        to="/certificate-templates"
+        style={{
+          ...styles.navLink,
+          ...(isActive("/certificate-templates") ? styles.navLinkActive : {}),
+        }}
+      >
+        Certificates
+      </Link>
       <div style={styles.navItem}>Settings</div>
 
       {/* empty scaffolding space for future navigation items */}

@@ -79,19 +79,20 @@ define('GOTS_CERT_PLACEHOLDERS', array(
 ));
 
 /**
- * Allowed config keys per preset (keys the librarian may edit).
+ * Allowed config keys (keys the librarian may edit).
  * All other keys are rejected.
  */
 define('GOTS_CERT_CONFIG_KEYS', array(
     'title',             // main heading text
-    'subtitle',          // sub-heading / "Certificate of Completion"
-    'body_text',         // body paragraph
+    'subtitle',          // sub-heading / "This certifies that"
+    'body_text',         // connecting phrase between recipient name and course title
     'issuer_name',       // library / organization display name
     'signature_label',   // label below signature line
     'accent_color',      // hex color code
     'font_family',       // approved font name (see GOTS_CERT_FONTS)
     'show_border',       // bool
     'show_seal',         // bool
+    'border_style',      // 'double' | 'single' | 'none'
 ));
 
 /** Approved font families (subset of safe CSS web-safe fonts + common system fonts). */
@@ -215,6 +216,18 @@ function gots_validate_template_config($config) {
             case 'show_border':
             case 'show_seal':
                 $sanitized[$key] = (bool) $value;
+                break;
+
+            case 'border_style':
+                $allowed = array('double', 'single', 'none');
+                if (!in_array($value, $allowed, true)) {
+                    return new WP_Error(
+                        'validation_error',
+                        'border_style must be double, single, or none',
+                        array('status' => 400)
+                    );
+                }
+                $sanitized[$key] = $value;
                 break;
 
             case 'title':
@@ -497,13 +510,14 @@ function gots_get_builtin_fallback_template() {
     $t->config_json         = array(
         'title'           => 'Certificate of Completion',
         'subtitle'        => 'This certifies that',
-        'body_text'       => '{{recipient_name}} has successfully completed {{tutorial_title}} on {{completion_date}}.',
+        'body_text'       => 'has successfully completed',
         'issuer_name'     => '{{issuer_name}}',
         'signature_label' => 'Authorized Signature',
-        'accent_color'    => '#2563eb',
+        'accent_color'    => '#1a2744',
         'font_family'     => 'Georgia',
         'show_border'     => true,
         'show_seal'       => false,
+        'border_style'    => 'double',
     );
     return $t;
 }
@@ -571,76 +585,60 @@ function gots_merge_placeholders($text, $values) {
 function gots_render_certificate_html($template, $values) {
     $config = is_array($template->config_json) ? $template->config_json : array();
 
-    // Merge placeholder defaults
     $defaults = array(
         'title'           => 'Certificate of Completion',
         'subtitle'        => 'This certifies that',
-        'body_text'       => '{{recipient_name}} has successfully completed {{tutorial_title}} on {{completion_date}}.',
+        'body_text'       => 'has successfully completed',
         'issuer_name'     => '{{issuer_name}}',
         'signature_label' => 'Authorized Signature',
-        'accent_color'    => '#2563eb',
+        'accent_color'    => '#1a2744',
         'font_family'     => 'Georgia',
         'show_border'     => true,
         'show_seal'       => false,
+        'border_style'    => 'double',
     );
     $cfg = array_merge($defaults, $config);
 
-    // Sanitize style values
-    $accent_color = preg_match('/^#[0-9A-Fa-f]{3,6}$/', $cfg['accent_color'])
-        ? $cfg['accent_color'] : '#2563eb';
+    $accent = preg_match('/^#[0-9A-Fa-f]{3,6}$/', $cfg['accent_color'])
+        ? $cfg['accent_color'] : '#1a2744';
 
-    $font_family = in_array($cfg['font_family'], GOTS_CERT_FONTS, true)
+    $font = in_array($cfg['font_family'], GOTS_CERT_FONTS, true)
         ? $cfg['font_family'] : 'Georgia';
 
-    // Merge placeholders into text fields
+    // Merge placeholders into configurable text fields
     $title           = gots_merge_placeholders($cfg['title'],           $values);
     $subtitle        = gots_merge_placeholders($cfg['subtitle'],        $values);
     $body_text       = gots_merge_placeholders($cfg['body_text'],       $values);
     $issuer_name     = gots_merge_placeholders($cfg['issuer_name'],     $values);
     $signature_label = gots_merge_placeholders($cfg['signature_label'], $values);
 
-    // Layout-specific styles
-    $layout = in_array($template->layout_type, GOTS_CERT_PRESETS, true)
-        ? $template->layout_type : 'classic';
+    // Dedicated layout fields — always their own visual elements
+    $recipient_name  = esc_html($values['recipient_name']  ?? '');
+    $tutorial_title  = esc_html($values['tutorial_title']  ?? '');
+    $completion_date = esc_html($values['completion_date'] ?? '');
+    $certificate_id  = esc_html($values['certificate_id']  ?? '');
 
-    $border_style = $cfg['show_border']
-        ? "border: 6px double {$accent_color}; padding: 40px;"
-        : "padding: 40px;";
-
-    // Background image (local file path → data URI for dompdf)
-    $bg_style = '';
-    if (!empty($template->background_media_id)) {
-        $bg_path = get_attached_file($template->background_media_id);
-        if ($bg_path && file_exists($bg_path)) {
-            $mime = mime_content_type($bg_path);
-            if (in_array($mime, array('image/jpeg', 'image/png', 'image/gif'), true)) {
-                $b64      = base64_encode(file_get_contents($bg_path));
-                $bg_style = "background-image: url('data:{$mime};base64,{$b64}'); background-size: cover; background-position: center;";
-            }
-        }
-    }
-
-    // Logo image
+    // Logo image (data URI for dompdf — cannot fetch remote URLs)
     $logo_html = '';
     if (!empty($template->logo_media_id)) {
         $logo_path = get_attached_file($template->logo_media_id);
         if ($logo_path && file_exists($logo_path)) {
             $mime = mime_content_type($logo_path);
             if (in_array($mime, array('image/jpeg', 'image/png', 'image/gif'), true)) {
-                $b64       = base64_encode(file_get_contents($logo_path));
+                $b64 = base64_encode(file_get_contents($logo_path));
                 $logo_html = '<img src="data:' . $mime . ';base64,' . $b64
-                    . '" alt="Logo" style="max-height:80px;max-width:200px;margin-bottom:16px;" />';
+                    . '" style="max-height:0.7in;max-width:2.5in;" alt="Logo" />';
             }
         }
     }
 
-    // Build layout-specific inner styles
-    $layout_styles = array(
-        'classic' => "text-align: center;",
-        'minimal' => "text-align: left; max-width: 600px; margin: 0 auto;",
-        'formal'  => "text-align: center; letter-spacing: 0.02em;",
-    );
-    $layout_style = isset($layout_styles[$layout]) ? $layout_styles[$layout] : $layout_styles['classic'];
+    // Border style
+    $show_border  = !empty($cfg['show_border']);
+    $border_style = isset($cfg['border_style']) && in_array($cfg['border_style'], array('double', 'single', 'none'), true)
+        ? $cfg['border_style'] : 'double';
+    if (!$show_border) {
+        $border_style = 'none';
+    }
 
     ob_start();
     ?>
@@ -648,75 +646,93 @@ function gots_render_certificate_html($template, $values) {
 <html>
 <head>
 <meta charset="UTF-8" />
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: <?php echo esc_attr($font_family); ?>, serif;
-    background: #fff;
-    color: #1a1a1a;
-    width: 100%;
-    height: 100%;
-  }
-  .cert-wrap {
-    width: 100%;
-    min-height: 540px;
-    <?php echo $border_style; ?>
-    <?php echo $bg_style; ?>
-    <?php echo $layout_style; ?>
-    display: flex;
-    flex-direction: column;
-    align-items: <?php echo ($layout === 'minimal') ? 'flex-start' : 'center'; ?>;
-    justify-content: center;
-    gap: 12px;
-  }
-  .cert-logo { margin-bottom: 8px; }
-  .cert-title {
-    font-size: 28pt;
-    font-weight: bold;
-    color: <?php echo esc_attr($accent_color); ?>;
-    margin-bottom: 4px;
-  }
-  .cert-subtitle {
-    font-size: 13pt;
-    color: #555;
-    margin-bottom: 8px;
-    font-style: italic;
-  }
-  .cert-body {
-    font-size: 14pt;
-    line-height: 1.6;
-    max-width: 520px;
-    margin: 0 auto 16px;
-  }
-  .cert-id {
-    font-size: 8pt;
-    color: #888;
-    margin-top: 16px;
-  }
-  .cert-signature {
-    margin-top: 32px;
-    border-top: 1px solid #ccc;
-    padding-top: 8px;
-    font-size: 10pt;
-    color: #555;
-    min-width: 200px;
-  }
+<style type="text/css">
+  @page { margin: 0; size: 11in 8.5in landscape; }
+  body { margin: 0; padding: 0; font-family: <?php echo esc_attr($font); ?>, Times, serif; background-color: #ffffff; }
 </style>
 </head>
 <body>
-  <div class="cert-wrap">
-    <?php if ($logo_html): ?>
-      <div class="cert-logo"><?php echo $logo_html; ?></div>
-    <?php endif; ?>
-    <div class="cert-title"><?php echo esc_html($title); ?></div>
-    <div class="cert-subtitle"><?php echo esc_html($subtitle); ?></div>
-    <div class="cert-body"><?php echo esc_html($body_text); ?></div>
-    <div class="cert-signature">
-      <div><?php echo esc_html($issuer_name); ?></div>
-      <div><?php echo esc_html($signature_label); ?></div>
-    </div>
-    <div class="cert-id">Certificate ID: <?php echo esc_html($values['certificate_id'] ?? ''); ?></div>
-  </div>
+<table cellspacing="0" cellpadding="0" style="width:11in;height:8.5in;border-collapse:collapse;">
+<tr><td style="padding:0.28in;vertical-align:middle;text-align:center;">
+
+<?php if ($border_style === 'double') : ?>
+<table cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;border:4pt solid <?php echo esc_attr($accent); ?>;">
+<tr><td style="padding:4pt;vertical-align:top;">
+<table cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;border:1pt solid <?php echo esc_attr($accent); ?>;">
+<tr><td style="vertical-align:top;padding:0;">
+<?php elseif ($border_style === 'single') : ?>
+<table cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;border:2pt solid <?php echo esc_attr($accent); ?>;">
+<tr><td style="vertical-align:top;padding:0;">
+<?php else : ?>
+<table cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;border:0.5pt solid #e2e8f0;">
+<tr><td style="vertical-align:top;padding:0;">
+<?php endif; ?>
+
+<table cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;">
+<tr>
+<td style="padding:0.42in 0.55in 0.3in 0.55in;text-align:center;vertical-align:middle;">
+
+<?php if ($logo_html) : ?>
+<div style="margin-bottom:0.15in;"><?php echo $logo_html; ?></div>
+<?php endif; ?>
+
+<table cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;margin-bottom:0.12in;">
+<tr><td style="height:1pt;font-size:1pt;line-height:1pt;background-color:<?php echo esc_attr($accent); ?>;">&nbsp;</td></tr>
+</table>
+
+<div style="font-size:30pt;font-weight:bold;color:<?php echo esc_attr($accent); ?>;letter-spacing:0.07em;text-transform:uppercase;line-height:1.1;margin-bottom:0.1in;">
+  <?php echo esc_html($title); ?>
+</div>
+
+<table cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;margin-bottom:0.17in;">
+<tr><td style="height:1pt;font-size:1pt;line-height:1pt;background-color:<?php echo esc_attr($accent); ?>;">&nbsp;</td></tr>
+</table>
+
+<div style="font-size:11pt;color:#6b7280;font-style:italic;margin-bottom:0.1in;">
+  <?php echo esc_html($subtitle); ?>
+</div>
+
+<div style="font-size:26pt;font-weight:bold;color:<?php echo esc_attr($accent); ?>;line-height:1.2;margin-bottom:0.07in;">
+  <?php echo $recipient_name; ?>
+</div>
+
+<div style="font-size:11pt;color:#475569;margin-bottom:0.07in;">
+  <?php echo esc_html($body_text); ?>
+</div>
+
+<div style="font-size:17pt;font-weight:bold;color:#1e293b;line-height:1.3;margin-bottom:0.06in;">
+  <?php echo $tutorial_title; ?>
+</div>
+
+<div style="font-size:10pt;color:#6b7280;font-style:italic;margin-bottom:0.26in;">
+  on <?php echo $completion_date; ?>
+</div>
+
+<table cellspacing="0" cellpadding="0" style="margin:0 auto;border-collapse:collapse;">
+<tr><td style="width:2.4in;text-align:center;border-top:1pt solid #94a3b8;padding-top:0.1in;">
+  <div style="font-size:12pt;font-weight:bold;color:#334155;margin:0;"><?php echo esc_html($issuer_name); ?></div>
+  <div style="font-size:9.5pt;color:#64748b;margin-top:0.04in;"><?php echo esc_html($signature_label); ?></div>
+</td></tr>
+</table>
+
+</td>
+</tr>
+<tr>
+<td style="padding:0.09in 0.35in;border-top:1pt solid #e2e8f0;text-align:center;font-size:7.5pt;color:#94a3b8;">
+  Certificate ID: <?php echo $certificate_id; ?>
+</td>
+</tr>
+</table>
+
+<?php if ($border_style === 'double') : ?>
+</td></tr></table>
+</td></tr></table>
+<?php else : ?>
+</td></tr></table>
+<?php endif; ?>
+
+</td></tr>
+</table>
 </body>
 </html>
     <?php

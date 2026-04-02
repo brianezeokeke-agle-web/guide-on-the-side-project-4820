@@ -8,8 +8,7 @@ import {
   previewTemplate,
 } from "../services/certificateTemplateApi";
 
-const PRESETS = ["classic", "minimal", "formal"];
-const FONTS   = [
+const FONTS = [
   "Georgia", "Times New Roman", "Arial", "Helvetica",
   "Verdana", "Tahoma", "Trebuchet MS", "Palatino Linotype",
 ];
@@ -17,19 +16,19 @@ const FONTS   = [
 const EMPTY_CONFIG = {
   title:           "Certificate of Completion",
   subtitle:        "This certifies that",
-  body_text:       "{{recipient_name}} has successfully completed {{tutorial_title}} on {{completion_date}}.",
+  body_text:       "has successfully completed",
   issuer_name:     "{{issuer_name}}",
   signature_label: "Authorized Signature",
-  accent_color:    "#2563eb",
+  accent_color:    "#1a2744",
   font_family:     "Georgia",
   show_border:     true,
   show_seal:       false,
+  border_style:    "double",
 };
 
 const EMPTY_FORM = {
-  name:        "",
-  layout_type: "classic",
-  is_default:  false,
+  name:       "",
+  is_default: false,
   config_json: { ...EMPTY_CONFIG },
 };
 
@@ -72,7 +71,6 @@ export default function CertificateTemplatesPage() {
     setEditingId(template.id);
     setForm({
       name:        template.name,
-      layout_type: template.layout_type,
       is_default:  !!template.is_default,
       config_json: { ...EMPTY_CONFIG, ...template.config_json },
     });
@@ -103,7 +101,7 @@ export default function CertificateTemplatesPage() {
     try {
       const payload = {
         name:        form.name.trim(),
-        layout_type: form.layout_type,
+        layout_type: "classic",
         is_default:  form.is_default,
         config_json: form.config_json,
       };
@@ -174,7 +172,7 @@ export default function CertificateTemplatesPage() {
                   ) : null}
                 </div>
                 <div style={styles.cardMeta}>
-                  Preset: <strong>{t.layout_type}</strong>
+                  Font: <strong>{t.config_json?.font_family || "Georgia"}</strong>
                 </div>
                 <div style={styles.cardActions}>
                   <button onClick={() => openEdit(t)} style={styles.editButton}>
@@ -208,23 +206,10 @@ export default function CertificateTemplatesPage() {
                 maxLength={191}
               />
 
-              {/* Preset */}
-              <label style={styles.fieldLabel}>Preset Layout</label>
-              <select
-                value={form.layout_type}
-                onChange={(e) => setForm((p) => ({ ...p, layout_type: e.target.value }))}
-                style={styles.selectInput}
-              >
-                {PRESETS.map((p) => (
-                  <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
-                ))}
-              </select>
-
-              {/* Config fields */}
+              {/* Config text fields */}
               {[
                 { key: "title",           label: "Title" },
                 { key: "subtitle",        label: "Subtitle" },
-                { key: "body_text",       label: "Body Text" },
                 { key: "issuer_name",     label: "Issuer Name" },
                 { key: "signature_label", label: "Signature Label" },
               ].map(({ key, label }) => (
@@ -239,6 +224,21 @@ export default function CertificateTemplatesPage() {
                   />
                 </div>
               ))}
+
+              {/* Completion Phrase */}
+              <label style={styles.fieldLabel}>Completion Phrase</label>
+              <input
+                type="text"
+                value={form.config_json.body_text || ""}
+                onChange={(e) => setConfigField("body_text", e.target.value)}
+                style={styles.textInput}
+                maxLength={500}
+              />
+              <p style={styles.fieldHint}>
+                Shown between the recipient&apos;s name and the course title.<br />
+                Example: &ldquo;has successfully completed&rdquo;<br />
+                Supports: {"{{tutorial_title}}, {{completion_date}}, {{issuer_name}}"}
+              </p>
 
               {/* Accent color */}
               <label style={styles.fieldLabel}>Accent Color</label>
@@ -297,6 +297,22 @@ export default function CertificateTemplatesPage() {
                   Set as Default
                 </label>
               </div>
+
+              {/* Border style — only shown when border is enabled */}
+              {!!form.config_json.show_border && (
+                <>
+                  <label style={styles.fieldLabel}>Border Style</label>
+                  <select
+                    value={form.config_json.border_style || "double"}
+                    onChange={(e) => setConfigField("border_style", e.target.value)}
+                    style={styles.selectInput}
+                  >
+                    <option value="double">Double (classic diploma)</option>
+                    <option value="single">Single</option>
+                    <option value="none">None</option>
+                  </select>
+                </>
+              )}
 
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                 <button
@@ -484,9 +500,16 @@ const styles = {
     fontSize: "14px",
     border: "1px solid #d1d5db",
     borderRadius: "6px",
-    marginBottom: "12px",
+    marginBottom: "4px",
     boxSizing: "border-box",
     outline: "none",
+  },
+  fieldHint: {
+    fontSize: "12px",
+    color: "#6b7280",
+    marginTop: "0",
+    marginBottom: "12px",
+    lineHeight: "1.5",
   },
   selectInput: {
     width: "100%",

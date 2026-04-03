@@ -113,13 +113,15 @@ function gots_cert_base64url_decode($data) {
  *
  * @param int    $tutorial_id
  * @param string $student_id  Hashed student identifier (IP-hash or user-ID-hash).
+ * @param bool   $for_preview When true, payload is marked so issuance may allow non-published tutorials for editors only.
  * @return string  Compact token: <base64url-payload>.<base64url-sig>
  */
-function gots_generate_completion_proof($tutorial_id, $student_id) {
+function gots_generate_completion_proof($tutorial_id, $student_id, $for_preview = false) {
     $payload = wp_json_encode(array(
         'tid' => (int) $tutorial_id,
         'sid' => (string) $student_id,
         'iat' => time(),
+        'pv'  => $for_preview ? 1 : 0,
     ));
 
     $encoded_payload = gots_cert_base64url_encode($payload);
@@ -258,31 +260,91 @@ function gots_validate_download_token($token) {
     return $cert;
 }
 
-// ─── Rate limiting ────────────────────────────────────────────────────────────
-
 /**
- * Check and increment the issuance rate limit for an IP + tutorial combination.
+ * Re-render certificate PDF bytes from DB row + current HTML template.
+ * Download uses this so layout/CSS updates apply without re-issuing.
  *
- * Uses a WP transient keyed by hashed IP + tutorial_id, valid for 1 hour.
- * Limit: 5 issuances per IP per tutorial per hour.
- *
- * @param int    $tutorial_id
- * @param string $ip  Raw client IP address (will be hashed before storage).
- * @return bool  True if within limits, false if rate-limited.
+ * @param object $cert Row from gots_certificates (SELECT *).
+ * @return string|WP_Error Raw PDF bytes or error.
  */
-function gots_check_certificate_rate_limit($tutorial_id, $ip) {
-    $max     = 5;
-    $window  = HOUR_IN_SECONDS;
-    $ip_hash = hash('sha256', $ip);
-    $key     = 'gots_cert_rl_' . substr($ip_hash, 0, 16) . '_' . absint($tutorial_id);
+function gots_rerender_certificate_pdf_bytes($cert) {
+    $tutorial_id = (int) $cert->tutorial_id;
+    $template    = null;
 
-    $count = (int) get_transient($key);
-    if ($count >= $max) {
-        return false;
+    if (!empty($cert->template_id)) {
+        $template = gots_get_template((int) $cert->template_id);
+    }
+    if (!$template) {
+        $template = gots_resolve_tutorial_template($tutorial_id);
     }
 
+    $cert_settings = gots_get_tutorial_cert_settings($tutorial_id);
+    $issuer        = !empty($cert_settings['issuer_name']) ? $cert_settings['issuer_name'] : get_bloginfo('name');
+    $issued_day    = (!empty($cert->issued_at) && strlen($cert->issued_at) >= 10)
+        ? substr($cert->issued_at, 0, 10)
+        : current_time('Y-m-d');
+
+    $values = array(
+        'recipient_name'  => $cert->recipient_name,
+        'tutorial_title'  => get_the_title($tutorial_id),
+        'completion_date' => $issued_day,
+        'issuer_name'     => $issuer,
+        'certificate_id'  => $cert->verification_token,
+    );
+
+    $html = gots_render_certificate_html($template, $values);
+
+    return gots_render_pdf($html, array('paper_size' => 'letter', 'orientation' => 'landscape'));
+}
+
+// ─── Rate limiting ────────────────────────────────────────────────────────────
+
+/** Max successful new certificate issuances per IP per tutorial per hour (abuse protection). */
+define('GOTS_CERT_ISSUE_RATE_LIMIT_MAX', 25);
+
+/**
+ * Transient key for certificate issuance rate limit (per IP + tutorial).
+ *
+ * @param int    $tutorial_id
+ * @param string $ip
+ * @return string
+ */
+function gots_certificate_rate_limit_key($tutorial_id, $ip) {
+    $ip_hash = hash('sha256', $ip);
+    // v2 suffix resets counters after logic change (success-only counting, higher cap).
+    return 'gots_cert_rl_v2_' . substr($ip_hash, 0, 16) . '_' . absint($tutorial_id);
+}
+
+/**
+ * Whether a new (non-duplicate) certificate may be issued under the hourly cap.
+ * Does not increment — call gots_certificate_rate_limit_record_success() after a successful insert.
+ *
+ * @param int    $tutorial_id
+ * @param string $ip
+ * @return bool
+ */
+function gots_certificate_rate_limit_allowed($tutorial_id, $ip) {
+    $max = (int) apply_filters('gots_certificate_rate_limit_max', GOTS_CERT_ISSUE_RATE_LIMIT_MAX);
+    if ($max < 1) {
+        $max = GOTS_CERT_ISSUE_RATE_LIMIT_MAX;
+    }
+    $key   = gots_certificate_rate_limit_key($tutorial_id, $ip);
+    $count = (int) get_transient($key);
+    return $count < $max;
+}
+
+/**
+ * Record one successful new certificate issuance toward the hourly rate limit.
+ *
+ * @param int    $tutorial_id
+ * @param string $ip
+ * @return void
+ */
+function gots_certificate_rate_limit_record_success($tutorial_id, $ip) {
+    $window = HOUR_IN_SECONDS;
+    $key    = gots_certificate_rate_limit_key($tutorial_id, $ip);
+    $count  = (int) get_transient($key);
     set_transient($key, $count + 1, $window);
-    return true;
 }
 
 /**
@@ -374,27 +436,33 @@ function gots_issue_certificate($tutorial_id, $recipient_name, $completion_proof
         return new WP_Error('proof_mismatch', 'Completion proof is not valid for this student.', array('status' => 403));
     }
 
-    // 3. Rate limit
     $ip = gots_get_client_ip();
-    if (!gots_check_certificate_rate_limit($tutorial_id, $ip)) {
-        return new WP_Error('rate_limited', 'Too many certificate requests. Please wait before trying again.', array('status' => 429));
-    }
 
-    // 4. Tutorial exists and is published
+    // 3. Tutorial exists; published required unless proof was issued in admin preview (signed pv flag + editor session).
     $post = get_post($tutorial_id);
-    if (!$post || $post->post_type !== 'gots_tutorial' || $post->post_status !== 'publish') {
+    if (!$post || $post->post_type !== 'gots_tutorial') {
         return new WP_Error('tutorial_unavailable', 'Tutorial not available.', array('status' => 404));
     }
+    if ($post->post_status !== 'publish') {
+        $preview_issuance = !empty($proof['pv']) && is_user_logged_in() && current_user_can('edit_posts');
+        if (!$preview_issuance) {
+            return new WP_Error(
+                'tutorial_not_published',
+                'This tutorial must be published before certificates can be issued. Open the public playback link after publishing.',
+                array('status' => 403)
+            );
+        }
+    }
 
-    // 5. Certificate feature is enabled for this tutorial
+    // 4. Certificate feature is enabled for this tutorial
     $cert_settings = gots_get_tutorial_cert_settings($tutorial_id);
     if (empty($cert_settings['enabled'])) {
         return new WP_Error('cert_disabled', 'Certificates are not enabled for this tutorial.', array('status' => 403));
     }
 
-    // 6. Idempotency — check if a certificate was already issued for this student + tutorial recently
-    $table       = $wpdb->prefix . 'gots_certificates';
-    $existing    = $wpdb->get_row($wpdb->prepare(
+    // 5. Existing certificate for this student + tutorial — return without consuming rate limit
+    $table    = $wpdb->prefix . 'gots_certificates';
+    $existing = $wpdb->get_row($wpdb->prepare(
         "SELECT id, verification_token FROM $table
          WHERE tutorial_id = %d AND student_identifier_hash = %s
          ORDER BY issued_at DESC LIMIT 1",
@@ -403,7 +471,6 @@ function gots_issue_certificate($tutorial_id, $recipient_name, $completion_proof
     ), OBJECT);
 
     if ($existing) {
-        // Return the existing certificate's download URL
         $dl       = gots_generate_download_token($existing->id);
         $rest_url = rest_url('gots/v1/certificates/' . urlencode($dl['token']) . '/download');
         return array(
@@ -411,6 +478,11 @@ function gots_issue_certificate($tutorial_id, $recipient_name, $completion_proof
             'downloadUrl'   => $rest_url,
             'expiresAt'     => $dl['expires_at'],
         );
+    }
+
+    // 6. New issuance only: hourly cap (counted only after successful DB insert, so failed attempts do not burn quota)
+    if (!gots_certificate_rate_limit_allowed($tutorial_id, $ip)) {
+        return new WP_Error('rate_limited', 'Too many certificate requests. Please wait before trying again.', array('status' => 429));
     }
 
     // 7. Resolve template and render HTML
@@ -477,6 +549,8 @@ function gots_issue_certificate($tutorial_id, $recipient_name, $completion_proof
         return new WP_Error('db_error', 'Could not save certificate record.', array('status' => 500));
     }
 
+    gots_certificate_rate_limit_record_success($tutorial_id, $ip);
+
     $cert_id = (int) $wpdb->insert_id;
 
     // 11. Generate signed download token
@@ -509,11 +583,6 @@ function gots_stream_certificate_pdf($token) {
         return $cert;
     }
 
-    $pdf_path = $cert->pdf_path;
-    if (!file_exists($pdf_path)) {
-        return new WP_Error('file_not_found', 'Certificate file not found.', array('status' => 404));
-    }
-
     // Increment download counter
     $wpdb->query($wpdb->prepare(
         "UPDATE {$wpdb->prefix}gots_certificates SET download_count = download_count + 1 WHERE id = %d",
@@ -523,15 +592,51 @@ function gots_stream_certificate_pdf($token) {
     // Build a safe filename for the Content-Disposition header
     $filename = 'certificate-' . sanitize_file_name($cert->verification_token) . '.pdf';
 
-    // Stream
+    // Always render with current template/CSS (stored PDF on disk is only a backup).
+    $bytes = gots_rerender_certificate_pdf_bytes($cert);
+    if (is_wp_error($bytes)) {
+        $pdf_path = $cert->pdf_path;
+        if (!file_exists($pdf_path)) {
+            return $bytes;
+        }
+        error_log('[GOTS Cert] Rerender failed, using stored file: ' . $bytes->get_error_message());
+        $bytes = file_get_contents($pdf_path);
+        if ($bytes === false) {
+            return new WP_Error('read_error', 'Could not read certificate PDF.', array('status' => 500));
+        }
+    }
+
     nocache_headers();
     header('Content-Type: application/pdf');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
-    header('Content-Length: ' . filesize($pdf_path));
+    header('Content-Length: ' . strlen($bytes));
     header('X-Content-Type-Options: nosniff');
 
-    readfile($pdf_path);
+    echo $bytes;
     exit;
+}
+
+/**
+ * Look up a certificate row by the verification_token (Certificate ID on the PDF).
+ *
+ * @param string $token
+ * @return object|null  { id, tutorial_id, issued_at, status } or null
+ */
+function gots_lookup_certificate_by_verification_token($token) {
+    global $wpdb;
+
+    $token = sanitize_text_field((string) $token);
+    if ($token === '') {
+        return null;
+    }
+
+    $table = $wpdb->prefix . 'gots_certificates';
+    $row   = $wpdb->get_row($wpdb->prepare(
+        "SELECT id, tutorial_id, issued_at, status FROM $table WHERE verification_token = %s LIMIT 1",
+        $token
+    ), OBJECT);
+
+    return $row ?: null;
 }
 
 // ─── Admin query helpers ──────────────────────────────────────────────────────

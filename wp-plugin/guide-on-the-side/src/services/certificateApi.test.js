@@ -1,6 +1,6 @@
 // Unit tests: certificateApi.js (student-side certificate issuance)
 
-import { issueCertificate, downloadCertificate } from './certificateApi';
+import { issueCertificate, downloadCertificate, verifyCertificate } from './certificateApi';
 
 global.fetch = jest.fn();
 
@@ -126,5 +126,20 @@ describe('certificateApi', () => {
     // After click the element is removed, so we check via click spy
     // The function should complete without throwing
     expect(true).toBe(true);
+  });
+
+  // ── verifyCertificate ─────────────────────────────────────────────────────
+
+  test('verifyCertificate GETs public verify URL', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ valid: true, issued_at: '2026-01-01', tutorial_title: 'T', status: 'issued' }),
+    });
+
+    const result = await verifyCertificate('abc-uuid-123');
+
+    expect(fetch.mock.calls[0][0]).toContain('/certificates/verify/');
+    expect(fetch.mock.calls[0][0]).toContain(encodeURIComponent('abc-uuid-123'));
+    expect(result.valid).toBe(true);
   });
 });

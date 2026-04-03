@@ -67,7 +67,7 @@ add_action('admin_init', 'gots_maybe_create_certificate_templates_table');
 // ─── Preset constants ─────────────────────────────────────────────────────────
 
 /** Supported layout preset types. */
-define('GOTS_CERT_PRESETS', array('classic', 'minimal', 'formal'));
+define('GOTS_CERT_PRESETS', array('classic', 'minimal', 'formal', 'custom_html'));
 
 /** Allowed placeholder tokens in template text fields. */
 define('GOTS_CERT_PLACEHOLDERS', array(
@@ -93,7 +93,11 @@ define('GOTS_CERT_CONFIG_KEYS', array(
     'show_border',       // bool
     'show_seal',         // bool
     'border_style',      // 'double' | 'single' | 'none'
+    'custom_html',       // HTML fragment when layout_type is custom_html (sanitized for PDF rendering)
 ));
+
+/** Maximum length in bytes for custom_html stored in template config. */
+define('GOTS_CERT_CUSTOM_HTML_MAX_LENGTH', 100000);
 
 /** Approved font families (subset of safe CSS web-safe fonts + common system fonts). */
 define('GOTS_CERT_FONTS', array(
@@ -106,6 +110,20 @@ define('GOTS_CERT_FONTS', array(
     'Trebuchet MS',
     'Palatino Linotype',
 ));
+
+/**
+ * Attachment ID for a certificate logo, or null if missing / not an image.
+ *
+ * @param mixed $value
+ * @return int|null
+ */
+function gots_sanitize_certificate_logo_media_id($value) {
+    $id = absint($value);
+    if (!$id || !wp_attachment_is_image($id)) {
+        return null;
+    }
+    return $id;
+}
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
@@ -159,7 +177,7 @@ function gots_validate_template_data($data) {
         'slug'                => gots_generate_template_slug(isset($data['slug']) ? $data['slug'] : $data['name']),
         'layout_type'         => $layout,
         'background_media_id' => !empty($data['background_media_id']) ? absint($data['background_media_id']) : null,
-        'logo_media_id'       => !empty($data['logo_media_id'])       ? absint($data['logo_media_id'])       : null,
+        'logo_media_id'       => !empty($data['logo_media_id']) ? gots_sanitize_certificate_logo_media_id($data['logo_media_id']) : null,
         'config_json'         => $config_result,
         'is_default'          => !empty($data['is_default']) ? 1 : 0,
         'is_active'           => isset($data['is_active']) ? (int) (bool) $data['is_active'] : 1,
@@ -237,6 +255,24 @@ function gots_validate_template_config($config) {
             case 'signature_label':
                 // Allow placeholder tokens but strip arbitrary HTML
                 $sanitized[$key] = gots_sanitize_placeholders(wp_kses($value, array()));
+                break;
+
+            case 'custom_html':
+                if (!is_string($value)) {
+                    return new WP_Error(
+                        'validation_error',
+                        'custom_html must be a string',
+                        array('status' => 400)
+                    );
+                }
+                if (strlen($value) > GOTS_CERT_CUSTOM_HTML_MAX_LENGTH) {
+                    return new WP_Error(
+                        'validation_error',
+                        'custom_html exceeds maximum length',
+                        array('status' => 400)
+                    );
+                }
+                $sanitized[$key] = gots_sanitize_custom_certificate_html_body($value);
                 break;
 
             default:
@@ -553,6 +589,101 @@ function gots_save_tutorial_cert_settings($tutorial_id, $settings) {
     update_post_meta($tutorial_id, '_gots_certificate_issuer_name', sanitize_text_field($settings['issuer_name'] ?? ''));
 }
 
+/**
+ * Allowed tags for custom_html certificate bodies (PDF-safe subset).
+ *
+ * @return array
+ */
+function gots_cert_custom_html_allowed_tags() {
+    $common = array(
+        'style'         => true,
+        'class'         => true,
+        'align'         => true,
+        'width'         => true,
+        'height'        => true,
+        'colspan'       => true,
+        'rowspan'       => true,
+        'valign'        => true,
+        'cellpadding'   => true,
+        'cellspacing'   => true,
+        'border'        => true,
+    );
+
+    return array(
+        'div'    => $common,
+        'p'      => $common,
+        'br'     => array(),
+        'hr'     => array('style' => true),
+        'table'  => $common,
+        'tbody'  => $common,
+        'thead'  => $common,
+        'tfoot'  => $common,
+        'tr'     => $common,
+        'td'     => $common,
+        'th'     => $common,
+        'span'   => $common,
+        'strong' => array(),
+        'em'     => array(),
+        'b'      => array(),
+        'i'      => array(),
+        'h1'     => $common,
+        'h2'     => $common,
+        'h3'     => $common,
+        'img'    => array(
+            'src'    => true,
+            'style'  => true,
+            'alt'    => true,
+            'width'  => true,
+            'height' => true,
+        ),
+    );
+}
+
+/**
+ * Sanitize custom certificate HTML (placeholders preserved; scripts stripped).
+ *
+ * @param string $html
+ * @return string
+ */
+function gots_sanitize_custom_certificate_html_body($html) {
+    $html = wp_kses($html, gots_cert_custom_html_allowed_tags());
+
+    return preg_replace_callback(
+        '/<img\s+[^>]*src\s*=\s*(["\'])([^"\']+)\1[^>]*>/i',
+        function ($m) {
+            $src = $m[2];
+            if (preg_match('#^(https?:|data:image/(png|jpeg|gif|jpg);base64,)#i', $src)) {
+                return $m[0];
+            }
+            return '';
+        },
+        $html
+    );
+}
+
+/**
+ * Wrap custom_html after placeholder merge in a minimal HTML document for PDF output.
+ *
+ * @param string $inner_html Saved HTML fragment (already sanitized).
+ * @param array  $values     Placeholder values.
+ * @param array  $cfg        Includes font_family.
+ * @return string
+ */
+function gots_render_custom_certificate_document($inner_html, $values, $cfg) {
+    $body = gots_merge_placeholders($inner_html, $values);
+    $font = in_array($cfg['font_family'] ?? '', GOTS_CERT_FONTS, true)
+        ? $cfg['font_family']
+        : 'Georgia';
+
+    return '<!DOCTYPE html><html><head><meta charset="UTF-8"/>'
+        . '<style type="text/css">@page { margin: 0; size: 11in 8.5in landscape; }'
+        . 'body { margin: 0; padding: 0.3in; font-family: '
+        . esc_attr($font)
+        . ', Times, serif; }</style></head><body>'
+        . $body
+        . '</body></html>';
+}
+
 // ─── Placeholder merge ────────────────────────────────────────────────────────
 
 /**
@@ -584,6 +715,17 @@ function gots_merge_placeholders($text, $values) {
  */
 function gots_render_certificate_html($template, $values) {
     $config = is_array($template->config_json) ? $template->config_json : array();
+    $layout = isset($template->layout_type) ? $template->layout_type : 'classic';
+
+    if ($layout === 'custom_html') {
+        $defaults = array(
+            'font_family' => 'Georgia',
+            'custom_html' => '',
+        );
+        $cfg    = array_merge($defaults, $config);
+        $inner  = isset($cfg['custom_html']) ? $cfg['custom_html'] : '';
+        return gots_render_custom_certificate_document($inner, $values, $cfg);
+    }
 
     $defaults = array(
         'title'           => 'Certificate of Completion',

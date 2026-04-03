@@ -50,17 +50,29 @@ export async function deleteTemplate(id) {
  * Open a preview PDF for a template (or unsaved data) in a new tab.
  * Sends an authenticated POST — the server responds with a PDF stream.
  *
- * @param {number|null} templateId  0 to use built-in fallback
- * @param {object|null} configOverrides  Optional unsaved config to preview
+ * @param {number|null} templateId  0 for unsaved / built-in base merged with overrides
+ * @param {object|null} configOverrides  Optional unsaved config_json
+ * @param {{ layout_type?: string, logo_media_id?: number|null }} [extras]  Unsaved layout or logo
  */
-export async function previewTemplate(templateId, configOverrides = null) {
+export async function previewTemplate(templateId, configOverrides = null, extras = {}) {
   const config = getConfig();
   const id = templateId || 0;
   const url = `${config.baseUrl}/certificate-templates/${id}/preview`;
   const headers = { 'Content-Type': 'application/json' };
   if (config.nonce) headers['X-WP-Nonce'] = config.nonce;
 
-  const body = configOverrides ? { config_json: configOverrides } : {};
+  const body = {};
+  if (configOverrides && typeof configOverrides === 'object') {
+    body.config_json = configOverrides;
+  }
+  if (extras && typeof extras === 'object') {
+    if (extras.layout_type) {
+      body.layout_type = extras.layout_type;
+    }
+    if (Object.prototype.hasOwnProperty.call(extras, 'logo_media_id')) {
+      body.logo_media_id = extras.logo_media_id;
+    }
+  }
 
   const response = await fetch(url, {
     method: 'POST',
@@ -94,4 +106,27 @@ export async function saveTutorialCertSettings(tutorialId, settings) {
 
 export async function listTutorialCertificates(tutorialId, limit = 50, offset = 0) {
   return apiRequest(`/tutorials/${tutorialId}/certificates?limit=${limit}&offset=${offset}`);
+}
+
+/**
+ * Look up a certificate by the Certificate ID printed on the PDF (public endpoint).
+ * Does not return the student name.
+ *
+ * @param {string} verificationId
+ * @returns {Promise<{ valid: false } | { valid: true, issued_at: string, tutorial_title: string, status: string }>}
+ */
+export async function verifyCertificateById(verificationId) {
+  const config = getConfig();
+  const raw = String(verificationId ?? '').trim();
+  if (!raw) {
+    throw new Error('Enter the certificate ID from the PDF.');
+  }
+  const id = encodeURIComponent(raw);
+  const url = `${config.baseUrl}/certificates/verify/${id}`;
+  const response = await fetch(url, { credentials: 'same-origin' });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.message || `Verification failed (${response.status})`);
+  }
+  return response.json();
 }

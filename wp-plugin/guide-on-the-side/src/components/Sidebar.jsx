@@ -37,9 +37,17 @@ export default function Sidebar() {
       >
         Certificates
       </Link>
+      <Link
+        to="/certificate-verify"
+        style={{
+          ...styles.navLink,
+          ...(isActive("/certificate-verify") ? styles.navLinkActive : {}),
+        }}
+      >
+        Verify certificate ID
+      </Link>
       <div style={styles.navItem}>Settings</div>
 
-      {/* empty scaffolding space for future navigation items */}
       <div style={{ flexGrow: 1 }} />
     </aside>
   );

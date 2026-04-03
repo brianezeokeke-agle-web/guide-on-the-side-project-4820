@@ -82,3 +82,21 @@ export function downloadCertificate(downloadUrl, filename = 'certificate.pdf') {
   a.click();
   document.body.removeChild(a);
 }
+
+/**
+ * Public lookup by Certificate ID (UUID printed on the PDF). No auth required.
+ *
+ * @param {string} verificationId
+ * @returns {Promise<{ valid: false } | { valid: true, issued_at: string, tutorial_title: string, status: string }>}
+ */
+export async function verifyCertificate(verificationId) {
+  const config = getConfig();
+  const id = encodeURIComponent(String(verificationId).trim());
+  const url = `${config.baseUrl}/certificates/verify/${id}`;
+  const response = await fetch(url, { credentials: 'same-origin' });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.message || `Verification failed (${response.status})`);
+  }
+  return response.json();
+}

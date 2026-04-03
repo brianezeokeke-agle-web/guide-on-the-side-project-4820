@@ -199,6 +199,18 @@ function gots_register_rest_routes() {
         ),
     ));
 
+    // GET /certificates/verify/{verification_id} — public lookup by certificate ID printed on PDF
+    register_rest_route($namespace, '/certificates/verify/(?P<verification_id>[a-zA-Z0-9-]{8,128})', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_verify_certificate',
+        'permission_callback' => 'gots_rest_permissions_check_public',
+        'args'                => array(
+            'verification_id' => array(
+                'validate_callback' => function($p) { return is_string($p) && strlen($p) >= 8 && strlen($p) <= 128; },
+            ),
+        ),
+    ));
+
     //analytics endpoints begin from here
 
     // POST /analytics/event - to record an anonymous analytics event. this needs no auth
@@ -1140,6 +1152,37 @@ function gots_rest_download_certificate($request) {
     return new WP_Error('stream_error', 'Failed to stream certificate.', array('status' => 500));
 }
 
+/**
+ * GET /certificates/verify/{verification_id}
+ *
+ * Public verification by the Certificate ID (UUID) printed on the PDF.
+ * Does not expose the recipient name.
+ *
+ * @param WP_REST_Request $request
+ * @return WP_REST_Response
+ */
+function gots_rest_verify_certificate($request) {
+    $vid = $request->get_param('verification_id');
+    $vid = is_string($vid) ? sanitize_text_field($vid) : '';
+
+    $row = gots_lookup_certificate_by_verification_token($vid);
+    if (!$row) {
+        return rest_ensure_response(array('valid' => false));
+    }
+
+    $tutorial_title = get_the_title((int) $row->tutorial_id);
+    if ($tutorial_title === '') {
+        $tutorial_title = '';
+    }
+
+    return rest_ensure_response(array(
+        'valid'          => true,
+        'issued_at'      => $row->issued_at,
+        'tutorial_title' => $tutorial_title,
+        'status'         => $row->status,
+    ));
+}
+
 // ── Admin certificate template REST callbacks ──────────────────────────────────
 
 /**
@@ -1221,12 +1264,36 @@ function gots_rest_preview_cert_template($request) {
         // Apply any preview overrides to config
         if (!empty($params['config_json']) && is_array($params['config_json'])) {
             $config_result = gots_validate_template_config($params['config_json']);
-            if (!is_wp_error($config_result)) {
-                $template->config_json = $config_result;
+            if (is_wp_error($config_result)) {
+                return $config_result;
             }
+            $template->config_json = $config_result;
         }
     } else {
         $template = gots_get_builtin_fallback_template();
+        if (!empty($params['config_json']) && is_array($params['config_json'])) {
+            $config_result = gots_validate_template_config($params['config_json']);
+            if (is_wp_error($config_result)) {
+                return $config_result;
+            }
+            $template->config_json = array_merge($template->config_json, $config_result);
+        }
+    }
+
+    // Unsaved layout (e.g. custom_html while creating a template)
+    if (!empty($params['layout_type']) && is_string($params['layout_type'])) {
+        $lt = sanitize_key($params['layout_type']);
+        if (in_array($lt, GOTS_CERT_PRESETS, true)) {
+            $template->layout_type = $lt;
+        }
+    }
+
+    // Optional logo override for preview (null clears unsaved preview; attachment must be an image)
+    if (array_key_exists('logo_media_id', $params)) {
+        $raw_logo = $params['logo_media_id'];
+        $template->logo_media_id = ($raw_logo === null || $raw_logo === '' || (int) $raw_logo === 0)
+            ? null
+            : gots_sanitize_certificate_logo_media_id($raw_logo);
     }
 
     $values = array(

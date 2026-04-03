@@ -5,6 +5,8 @@ import {
   createTemplate,
   updateTemplate,
   deleteTemplate,
+  previewTemplate,
+  verifyCertificateById,
   getTutorialCertSettings,
   saveTutorialCertSettings,
   listTutorialCertificates,
@@ -92,6 +94,54 @@ describe('certificateTemplateApi', () => {
       expect.objectContaining({ method: 'DELETE' })
     );
     expect(result.deleted).toBe(true);
+  });
+
+  // ── previewTemplate ───────────────────────────────────────────────────────
+
+  test('previewTemplate POSTs config_json, layout_type, and logo_media_id', async () => {
+    window.open = jest.fn();
+    const prevCreate = URL.createObjectURL;
+    URL.createObjectURL = jest.fn(() => 'blob:mock');
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      blob: async () => new Blob(['%PDF']),
+    });
+
+    await previewTemplate(
+      0,
+      { title: 'Preview Title' },
+      { layout_type: 'custom_html', logo_media_id: 99 }
+    );
+
+    expect(fetch).toHaveBeenCalledWith(
+      `${restUrl}/certificate-templates/0/preview`,
+      expect.objectContaining({ method: 'POST' })
+    );
+    const body = JSON.parse(fetch.mock.calls[0][1].body);
+    expect(body.config_json.title).toBe('Preview Title');
+    expect(body.layout_type).toBe('custom_html');
+    expect(body.logo_media_id).toBe(99);
+
+    URL.createObjectURL = prevCreate;
+  });
+
+  // ── verifyCertificateById ─────────────────────────────────────────────────
+
+  test('verifyCertificateById GETs verify URL', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ valid: true, issued_at: '2026-01-01', tutorial_title: 'T', status: 'issued' }),
+    });
+
+    const out = await verifyCertificateById('uuid-here');
+
+    expect(fetch.mock.calls[0][0]).toContain('/certificates/verify/');
+    expect(fetch.mock.calls[0][0]).toContain(encodeURIComponent('uuid-here'));
+    expect(out.valid).toBe(true);
+  });
+
+  test('verifyCertificateById throws when id empty', async () => {
+    await expect(verifyCertificateById('  ')).rejects.toThrow(/Enter the certificate ID/);
   });
 
   // ── getTutorialCertSettings ───────────────────────────────────────────────

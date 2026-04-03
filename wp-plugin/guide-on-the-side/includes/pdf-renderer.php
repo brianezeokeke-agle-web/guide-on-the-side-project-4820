@@ -2,6 +2,9 @@
 /**
  * PDF rendering service — thin wrapper around dompdf.
  *
+ * Output is HTML converted to PDF. Overlaying text onto an uploaded PDF would require
+ * additional libraries (for example FPDI with a PDF writer).
+ *
  * Design intent:
  *  - All dompdf coupling lives here so the renderer can be swapped in future
  *    (e.g. mPDF, Gotenberg) without touching business logic.

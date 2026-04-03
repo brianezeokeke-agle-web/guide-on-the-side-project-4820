@@ -7,6 +7,7 @@ import {
   deleteTemplate,
   previewTemplate,
 } from "../services/certificateTemplateApi";
+import { selectImage, isMediaLibraryAvailable } from "../services/mediaLibrary";
 
 const FONTS = [
   "Georgia", "Times New Roman", "Arial", "Helvetica",
@@ -24,12 +25,22 @@ const EMPTY_CONFIG = {
   show_border:     true,
   show_seal:       false,
   border_style:    "double",
+  custom_html:
+    '<div style="text-align:center;padding:0.5in;">\n' +
+    '<h1 style="margin-bottom:0.2in;">Certificate of Completion</h1>\n' +
+    '<p style="font-size:18pt;font-weight:bold;">{{recipient_name}}</p>\n' +
+    '<p>has completed <strong>{{tutorial_title}}</strong></p>\n' +
+    "<p>Completed on {{completion_date}}</p>\n" +
+    "<p>Certificate ID: {{certificate_id}}</p>\n" +
+    "</div>",
 };
 
 const EMPTY_FORM = {
-  name:       "",
-  is_default: false,
-  config_json: { ...EMPTY_CONFIG },
+  name:            "",
+  is_default:      false,
+  layout_type:     "classic",
+  logo_media_id:   null,
+  config_json:     { ...EMPTY_CONFIG },
 };
 
 export default function CertificateTemplatesPage() {
@@ -62,7 +73,7 @@ export default function CertificateTemplatesPage() {
 
   function openNew() {
     setEditingId(null);
-    setForm(EMPTY_FORM);
+    setForm({ ...EMPTY_FORM, config_json: { ...EMPTY_CONFIG } });
     setSaveError(null);
     setShowForm(true);
   }
@@ -70,9 +81,11 @@ export default function CertificateTemplatesPage() {
   function openEdit(template) {
     setEditingId(template.id);
     setForm({
-      name:        template.name,
-      is_default:  !!template.is_default,
-      config_json: { ...EMPTY_CONFIG, ...template.config_json },
+      name:            template.name,
+      is_default:      !!template.is_default,
+      layout_type:     template.layout_type || "classic",
+      logo_media_id:   template.logo_media_id != null ? Number(template.logo_media_id) : null,
+      config_json:     { ...EMPTY_CONFIG, ...template.config_json },
     });
     setSaveError(null);
     setShowForm(true);
@@ -100,10 +113,11 @@ export default function CertificateTemplatesPage() {
     setSaveError(null);
     try {
       const payload = {
-        name:        form.name.trim(),
-        layout_type: "classic",
-        is_default:  form.is_default,
-        config_json: form.config_json,
+        name:            form.name.trim(),
+        layout_type:     form.layout_type || "classic",
+        is_default:      form.is_default,
+        config_json:     form.config_json,
+        logo_media_id:   form.logo_media_id || null,
       };
       if (editingId) {
         await updateTemplate(editingId, payload);
@@ -133,12 +147,35 @@ export default function CertificateTemplatesPage() {
   async function handlePreview() {
     setPreviewing(true);
     try {
-      await previewTemplate(editingId || 0, form.config_json);
+      await previewTemplate(editingId || 0, form.config_json, {
+        layout_type:     form.layout_type,
+        logo_media_id:   form.logo_media_id,
+      });
     } catch (err) {
       setSaveError("Preview failed: " + err.message);
     } finally {
       setPreviewing(false);
     }
+  }
+
+  async function handlePickLogo() {
+    if (!isMediaLibraryAvailable()) {
+      setSaveError("WordPress media library is not available.");
+      return;
+    }
+    setSaveError(null);
+    try {
+      const selected = await selectImage();
+      if (selected?.attachmentId) {
+        setForm((p) => ({ ...p, logo_media_id: selected.attachmentId }));
+      }
+    } catch (err) {
+      setSaveError(err.message || "Could not select image.");
+    }
+  }
+
+  function handleClearLogo() {
+    setForm((p) => ({ ...p, logo_media_id: null }));
   }
 
   return (
@@ -206,59 +243,105 @@ export default function CertificateTemplatesPage() {
                 maxLength={191}
               />
 
+              <label style={styles.fieldLabel}>Layout</label>
+              <select
+                value={form.layout_type || "classic"}
+                onChange={(e) => setForm((p) => ({ ...p, layout_type: e.target.value }))}
+                style={styles.selectInput}
+              >
+                <option value="classic">Classic (preset design)</option>
+                <option value="custom_html">Custom HTML layout</option>
+                <option value="minimal">Minimal (same preset for now)</option>
+                <option value="formal">Formal (same preset for now)</option>
+              </select>
+
+              <label style={styles.fieldLabel}>School / library logo</label>
+              <div style={{ marginBottom: "12px", display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
+                <button type="button" onClick={handlePickLogo} style={styles.editButton}>
+                  {form.logo_media_id ? "Change logo…" : "Choose image (JPG, PNG, GIF)…"}
+                </button>
+                {form.logo_media_id ? (
+                  <>
+                    <span style={{ fontSize: "13px", color: "#6b7280" }}>Attachment #{form.logo_media_id}</span>
+                    <button type="button" onClick={handleClearLogo} style={styles.deleteButton}>
+                      Remove
+                    </button>
+                  </>
+                ) : (
+                  <span style={{ fontSize: "12px", color: "#9ca3af" }}>Shown at top of classic layout; embed images in custom HTML if needed.</span>
+                )}
+              </div>
+
               {/* Config text fields */}
-              {[
-                { key: "title",           label: "Title" },
-                { key: "subtitle",        label: "Subtitle" },
-                { key: "issuer_name",     label: "Issuer Name" },
-                { key: "signature_label", label: "Signature Label" },
-              ].map(({ key, label }) => (
-                <div key={key}>
-                  <label style={styles.fieldLabel}>{label}</label>
+              {form.layout_type !== "custom_html" && (
+                <>
+                  {[
+                    { key: "title",           label: "Title" },
+                    { key: "subtitle",        label: "Subtitle" },
+                    { key: "issuer_name",     label: "Issuer Name" },
+                    { key: "signature_label", label: "Signature Label" },
+                  ].map(({ key, label }) => (
+                    <div key={key}>
+                      <label style={styles.fieldLabel}>{label}</label>
+                      <input
+                        type="text"
+                        value={form.config_json[key] || ""}
+                        onChange={(e) => setConfigField(key, e.target.value)}
+                        style={styles.textInput}
+                        maxLength={500}
+                      />
+                    </div>
+                  ))}
+
+                  <label style={styles.fieldLabel}>Completion Phrase</label>
                   <input
                     type="text"
-                    value={form.config_json[key] || ""}
-                    onChange={(e) => setConfigField(key, e.target.value)}
+                    value={form.config_json.body_text || ""}
+                    onChange={(e) => setConfigField("body_text", e.target.value)}
                     style={styles.textInput}
                     maxLength={500}
                   />
-                </div>
-              ))}
+                  <p style={styles.fieldHint}>
+                    Shown between the recipient&apos;s name and the course title.<br />
+                    Example: &ldquo;has successfully completed&rdquo;<br />
+                    Supports: {"{{tutorial_title}}, {{completion_date}}, {{issuer_name}}"}
+                  </p>
 
-              {/* Completion Phrase */}
-              <label style={styles.fieldLabel}>Completion Phrase</label>
-              <input
-                type="text"
-                value={form.config_json.body_text || ""}
-                onChange={(e) => setConfigField("body_text", e.target.value)}
-                style={styles.textInput}
-                maxLength={500}
-              />
-              <p style={styles.fieldHint}>
-                Shown between the recipient&apos;s name and the course title.<br />
-                Example: &ldquo;has successfully completed&rdquo;<br />
-                Supports: {"{{tutorial_title}}, {{completion_date}}, {{issuer_name}}"}
-              </p>
+                  <label style={styles.fieldLabel}>Accent Color</label>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "12px" }}>
+                    <input
+                      type="color"
+                      value={form.config_json.accent_color || "#2563eb"}
+                      onChange={(e) => setConfigField("accent_color", e.target.value)}
+                      style={{ width: "40px", height: "32px", border: "none", cursor: "pointer" }}
+                    />
+                    <input
+                      type="text"
+                      value={form.config_json.accent_color || "#2563eb"}
+                      onChange={(e) => setConfigField("accent_color", e.target.value)}
+                      style={{ ...styles.textInput, marginBottom: 0, width: "120px" }}
+                      maxLength={7}
+                    />
+                  </div>
+                </>
+              )}
 
-              {/* Accent color */}
-              <label style={styles.fieldLabel}>Accent Color</label>
-              <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "12px" }}>
-                <input
-                  type="color"
-                  value={form.config_json.accent_color || "#2563eb"}
-                  onChange={(e) => setConfigField("accent_color", e.target.value)}
-                  style={{ width: "40px", height: "32px", border: "none", cursor: "pointer" }}
-                />
-                <input
-                  type="text"
-                  value={form.config_json.accent_color || "#2563eb"}
-                  onChange={(e) => setConfigField("accent_color", e.target.value)}
-                  style={{ ...styles.textInput, marginBottom: 0, width: "120px" }}
-                  maxLength={7}
-                />
-              </div>
+              {form.layout_type === "custom_html" && (
+                <>
+                  <label style={styles.fieldLabel}>Custom HTML</label>
+                  <p style={styles.fieldHint}>
+                    Use tables and inline styles; avoid flexbox and grid for reliable PDF output. Placeholders: {"{{recipient_name}}, {{tutorial_title}}, {{completion_date}}, {{issuer_name}}, {{certificate_id}}"}
+                  </p>
+                  <textarea
+                    value={form.config_json.custom_html || ""}
+                    onChange={(e) => setConfigField("custom_html", e.target.value)}
+                    style={styles.textArea}
+                    rows={14}
+                    spellCheck={false}
+                  />
+                </>
+              )}
 
-              {/* Font family */}
               <label style={styles.fieldLabel}>Font Family</label>
               <select
                 value={form.config_json.font_family || "Georgia"}
@@ -266,52 +349,67 @@ export default function CertificateTemplatesPage() {
                 style={styles.selectInput}
               >
                 {FONTS.map((f) => (
-                  <option key={f} value={f}>{f}</option>
+                  <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>
                 ))}
               </select>
 
-              {/* Toggles */}
-              <div style={{ display: "flex", gap: "24px", marginBottom: "12px" }}>
-                <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={!!form.config_json.show_border}
-                    onChange={(e) => setConfigField("show_border", e.target.checked)}
-                  />
-                  Show Border
-                </label>
-                <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={!!form.config_json.show_seal}
-                    onChange={(e) => setConfigField("show_seal", e.target.checked)}
-                  />
-                  Show Seal
-                </label>
-                <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={!!form.is_default}
-                    onChange={(e) => setForm((p) => ({ ...p, is_default: e.target.checked }))}
-                  />
-                  Set as Default
-                </label>
-              </div>
-
-              {/* Border style — only shown when border is enabled */}
-              {!!form.config_json.show_border && (
+              {form.layout_type !== "custom_html" && (
                 <>
-                  <label style={styles.fieldLabel}>Border Style</label>
-                  <select
-                    value={form.config_json.border_style || "double"}
-                    onChange={(e) => setConfigField("border_style", e.target.value)}
-                    style={styles.selectInput}
-                  >
-                    <option value="double">Double (classic diploma)</option>
-                    <option value="single">Single</option>
-                    <option value="none">None</option>
-                  </select>
+                  <div style={{ display: "flex", gap: "24px", marginBottom: "12px" }}>
+                    <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={!!form.config_json.show_border}
+                        onChange={(e) => setConfigField("show_border", e.target.checked)}
+                      />
+                      Show Border
+                    </label>
+                    <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={!!form.config_json.show_seal}
+                        onChange={(e) => setConfigField("show_seal", e.target.checked)}
+                      />
+                      Show Seal
+                    </label>
+                    <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={!!form.is_default}
+                        onChange={(e) => setForm((p) => ({ ...p, is_default: e.target.checked }))}
+                      />
+                      Set as Default
+                    </label>
+                  </div>
+
+                  {!!form.config_json.show_border && (
+                    <>
+                      <label style={styles.fieldLabel}>Border Style</label>
+                      <select
+                        value={form.config_json.border_style || "double"}
+                        onChange={(e) => setConfigField("border_style", e.target.value)}
+                        style={styles.selectInput}
+                      >
+                        <option value="double">Double (classic diploma)</option>
+                        <option value="single">Single</option>
+                        <option value="none">None</option>
+                      </select>
+                    </>
+                  )}
                 </>
+              )}
+
+              {form.layout_type === "custom_html" && (
+                <div style={{ marginBottom: "12px" }}>
+                  <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={!!form.is_default}
+                      onChange={(e) => setForm((p) => ({ ...p, is_default: e.target.checked }))}
+                    />
+                    Set as Default
+                  </label>
+                </div>
               )}
 
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
@@ -520,5 +618,17 @@ const styles = {
     marginBottom: "12px",
     boxSizing: "border-box",
     backgroundColor: "white",
+  },
+  textArea: {
+    width: "100%",
+    padding: "10px 12px",
+    fontSize: "13px",
+    fontFamily: "ui-monospace, monospace",
+    border: "1px solid #d1d5db",
+    borderRadius: "6px",
+    marginBottom: "12px",
+    boxSizing: "border-box",
+    outline: "none",
+    resize: "vertical",
   },
 };

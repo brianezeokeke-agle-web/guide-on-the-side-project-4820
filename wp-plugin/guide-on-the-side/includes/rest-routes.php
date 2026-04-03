@@ -101,7 +101,9 @@ function gots_register_rest_routes() {
         ),
     ));
 
-    // POST /generate-certificate - generate and return a PDF certificate
+    // ── Certificate endpoints ──────────────────────────────────────────────────
+
+    // POST /generate-certificate - generate and return a PDF certificate (legacy)
     register_rest_route($namespace, '/generate-certificate', array(
         'methods'             => WP_REST_Server::CREATABLE,
         'callback'            => 'gots_rest_generate_certificate',
@@ -130,6 +132,114 @@ function gots_register_rest_routes() {
                 'validate_callback' => function($param) {
                     return is_string($param) && strlen(trim($param)) > 0;
                 },
+            ),
+        ),
+    ));
+
+    // GET  /certificate-templates         — list all active templates (admin)
+    register_rest_route($namespace, '/certificate-templates', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_list_cert_templates',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+    ));
+
+    // POST /certificate-templates         — create a template (admin)
+    register_rest_route($namespace, '/certificate-templates', array(
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'gots_rest_create_cert_template',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+    ));
+
+    // PUT  /certificate-templates/{id}    — update a template (admin)
+    register_rest_route($namespace, '/certificate-templates/(?P<id>\d+)', array(
+        'methods'             => WP_REST_Server::EDITABLE,
+        'callback'            => 'gots_rest_update_cert_template',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // DELETE /certificate-templates/{id}  — soft-delete a template (admin)
+    register_rest_route($namespace, '/certificate-templates/(?P<id>\d+)', array(
+        'methods'             => WP_REST_Server::DELETABLE,
+        'callback'            => 'gots_rest_delete_cert_template',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // POST /certificate-templates/{id}/preview — render preview PDF inline (admin)
+    register_rest_route($namespace, '/certificate-templates/(?P<id>\d+)/preview', array(
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'gots_rest_preview_cert_template',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // PUT /tutorials/{id}/certificate-settings — save cert settings for a tutorial (admin)
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/certificate-settings', array(
+        'methods'             => WP_REST_Server::EDITABLE,
+        'callback'            => 'gots_rest_update_tutorial_cert_settings',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // GET /tutorials/{id}/certificate-settings — get cert settings for a tutorial (admin)
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/certificate-settings', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_get_tutorial_cert_settings_endpoint',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // GET /tutorials/{id}/certificates    — list issued certificates for a tutorial (admin)
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/certificates', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_list_tutorial_certificates',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // POST /tutorials/{id}/certificate/issue  — student issues a certificate after completion
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/certificate/issue', array(
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'gots_rest_issue_certificate',
+        'permission_callback' => 'gots_rest_permissions_check_public',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // GET /certificates/{token}/download  — stream a signed PDF
+    register_rest_route($namespace, '/certificates/(?P<token>[A-Za-z0-9._-]+)/download', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_download_certificate',
+        'permission_callback' => 'gots_rest_permissions_check_public',
+        'args'                => array(
+            'token' => array(
+                'validate_callback' => function($p) { return is_string($p) && strlen($p) <= 512; },
+            ),
+        ),
+    ));
+
+    // GET /certificates/verify/{verification_id} — public lookup by certificate ID printed on PDF
+    register_rest_route($namespace, '/certificates/verify/(?P<verification_id>[a-zA-Z0-9-]{8,128})', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_verify_certificate',
+        'permission_callback' => 'gots_rest_permissions_check_public',
+        'args'                => array(
+            'verification_id' => array(
+                'validate_callback' => function($p) { return is_string($p) && strlen($p) >= 8 && strlen($p) <= 128; },
             ),
         ),
     ));
@@ -1038,4 +1148,303 @@ function gots_rest_get_analytics_slides($request) {
     $slides = gots_get_slide_performance($id, $range['date_from'], $range['date_to']);
 
     return rest_ensure_response($slides);
+}
+
+// ── Certificate REST callbacks ─────────────────────────────────────────────────
+
+/**
+ * POST /tutorials/{id}/certificate/issue
+ *
+ * Request body:
+ *   recipientName    string  — display name for the certificate
+ *   completionProof  string  — signed proof token from gotsStudentConfig
+ *   idempotencyKey   string  — (optional) client-supplied dedup key
+ *
+ * @param WP_REST_Request $request
+ * @return WP_REST_Response|WP_Error
+ */
+function gots_rest_issue_certificate($request) {
+    $tutorial_id = absint($request->get_param('id'));
+    $params      = $request->get_json_params() ?: array();
+
+    $recipient_name   = isset($params['recipientName'])   ? sanitize_text_field($params['recipientName'])   : '';
+    $completion_proof = isset($params['completionProof']) ? sanitize_text_field($params['completionProof']) : '';
+    $idempotency_key  = isset($params['idempotencyKey'])  ? sanitize_text_field($params['idempotencyKey'])  : '';
+
+    if (empty($recipient_name)) {
+        return new WP_Error('missing_name', 'recipientName is required.', array('status' => 400));
+    }
+
+    if (empty($completion_proof)) {
+        return new WP_Error('missing_proof', 'completionProof is required.', array('status' => 400));
+    }
+
+    // Optional idempotency check
+    if (!empty($idempotency_key) && !gots_check_idempotency_key($idempotency_key)) {
+        // Duplicate in-flight request — return a 409 so the client can retry after a short delay
+        return new WP_Error('duplicate_request', 'Duplicate issuance request. Please wait a moment and try again.', array('status' => 409));
+    }
+
+    $student_id = gots_get_student_identifier();
+
+    $result = gots_issue_certificate($tutorial_id, $recipient_name, $completion_proof, $student_id);
+
+    if (is_wp_error($result)) {
+        return $result;
+    }
+
+    return rest_ensure_response($result);
+}
+
+/**
+ * GET /certificates/{token}/download
+ *
+ * Streams the certificate PDF to the browser.
+ *
+ * @param WP_REST_Request $request
+ * @return WP_Error  Only on failure; success causes exit via gots_stream_certificate_pdf().
+ */
+function gots_rest_download_certificate($request) {
+    $token = $request->get_param('token');
+
+    if (empty($token)) {
+        return new WP_Error('missing_token', 'Download token is required.', array('status' => 400));
+    }
+
+    $result = gots_stream_certificate_pdf(urldecode($token));
+
+    // If we get here, streaming failed
+    if (is_wp_error($result)) {
+        return $result;
+    }
+
+    // Should not reach here — gots_stream_certificate_pdf exits on success
+    return new WP_Error('stream_error', 'Failed to stream certificate.', array('status' => 500));
+}
+
+/**
+ * GET /certificates/verify/{verification_id}
+ *
+ * Public verification by the Certificate ID (UUID) printed on the PDF.
+ * Does not expose the recipient name.
+ *
+ * @param WP_REST_Request $request
+ * @return WP_REST_Response
+ */
+function gots_rest_verify_certificate($request) {
+    $vid = $request->get_param('verification_id');
+    $vid = is_string($vid) ? sanitize_text_field($vid) : '';
+
+    $row = gots_lookup_certificate_by_verification_token($vid);
+    if (!$row) {
+        return rest_ensure_response(array('valid' => false));
+    }
+
+    $tutorial_title = get_the_title((int) $row->tutorial_id);
+    if ($tutorial_title === '') {
+        $tutorial_title = '';
+    }
+
+    return rest_ensure_response(array(
+        'valid'          => true,
+        'issued_at'      => $row->issued_at,
+        'tutorial_title' => $tutorial_title,
+        'status'         => $row->status,
+    ));
+}
+
+// ── Admin certificate template REST callbacks ──────────────────────────────────
+
+/**
+ * GET /certificate-templates
+ */
+function gots_rest_list_cert_templates($request) {
+    $templates = gots_list_templates();
+    return rest_ensure_response($templates);
+}
+
+/**
+ * POST /certificate-templates
+ */
+function gots_rest_create_cert_template($request) {
+    $params = $request->get_json_params() ?: array();
+
+    $data = gots_validate_template_data($params);
+    if (is_wp_error($data)) {
+        return $data;
+    }
+
+    $id = gots_create_template($data);
+    if (is_wp_error($id)) {
+        return $id;
+    }
+
+    return rest_ensure_response(gots_get_template($id));
+}
+
+/**
+ * PUT /certificate-templates/{id}
+ */
+function gots_rest_update_cert_template($request) {
+    $template_id = absint($request->get_param('id'));
+    $params      = $request->get_json_params() ?: array();
+
+    $data = gots_validate_template_data($params);
+    if (is_wp_error($data)) {
+        return $data;
+    }
+
+    $result = gots_update_template($template_id, $data);
+    if (is_wp_error($result)) {
+        return $result;
+    }
+
+    return rest_ensure_response(gots_get_template($template_id));
+}
+
+/**
+ * DELETE /certificate-templates/{id}
+ */
+function gots_rest_delete_cert_template($request) {
+    $template_id = absint($request->get_param('id'));
+
+    $result = gots_delete_template($template_id);
+    if (is_wp_error($result)) {
+        return $result;
+    }
+
+    return rest_ensure_response(array('deleted' => true, 'id' => $template_id));
+}
+
+/**
+ * POST /certificate-templates/{id}/preview
+ *
+ * Renders a preview PDF and streams it inline to the browser.
+ */
+function gots_rest_preview_cert_template($request) {
+    $template_id = absint($request->get_param('id'));
+    $params      = $request->get_json_params() ?: array();
+
+    // Allow previewing with optional unsaved config overrides
+    if ($template_id > 0) {
+        $template = gots_get_template($template_id);
+        if (!$template) {
+            return new WP_Error('not_found', 'Template not found.', array('status' => 404));
+        }
+        // Apply any preview overrides to config
+        if (!empty($params['config_json']) && is_array($params['config_json'])) {
+            $config_result = gots_validate_template_config($params['config_json']);
+            if (is_wp_error($config_result)) {
+                return $config_result;
+            }
+            $template->config_json = $config_result;
+        }
+    } else {
+        $template = gots_get_builtin_fallback_template();
+        if (!empty($params['config_json']) && is_array($params['config_json'])) {
+            $config_result = gots_validate_template_config($params['config_json']);
+            if (is_wp_error($config_result)) {
+                return $config_result;
+            }
+            $template->config_json = array_merge($template->config_json, $config_result);
+        }
+    }
+
+    // Unsaved layout (e.g. custom_html while creating a template)
+    if (!empty($params['layout_type']) && is_string($params['layout_type'])) {
+        $lt = sanitize_key($params['layout_type']);
+        if (in_array($lt, GOTS_CERT_PRESETS, true)) {
+            $template->layout_type = $lt;
+        }
+    }
+
+    // Optional logo override for preview (null clears unsaved preview; attachment must be an image)
+    if (array_key_exists('logo_media_id', $params)) {
+        $raw_logo = $params['logo_media_id'];
+        $template->logo_media_id = ($raw_logo === null || $raw_logo === '' || (int) $raw_logo === 0)
+            ? null
+            : gots_sanitize_certificate_logo_media_id($raw_logo);
+    }
+
+    $values = array(
+        'recipient_name'  => 'Jane Student',
+        'tutorial_title'  => 'Sample Tutorial',
+        'completion_date' => current_time('Y-m-d'),
+        'issuer_name'     => get_bloginfo('name'),
+        'certificate_id'  => 'PREVIEW-0000',
+    );
+
+    $html  = gots_render_certificate_html($template, $values);
+    $bytes = gots_render_pdf($html, array('paper_size' => 'letter', 'orientation' => 'landscape'));
+
+    if (is_wp_error($bytes)) {
+        return $bytes;
+    }
+
+    nocache_headers();
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: inline; filename="certificate-preview.pdf"');
+    header('Content-Length: ' . strlen($bytes));
+    echo $bytes;
+    exit;
+}
+
+/**
+ * PUT /tutorials/{id}/certificate-settings
+ */
+function gots_rest_update_tutorial_cert_settings($request) {
+    $tutorial_id = absint($request->get_param('id'));
+    $params      = $request->get_json_params() ?: array();
+
+    $post = get_post($tutorial_id);
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error('tutorial_not_found', 'Tutorial not found.', array('status' => 404));
+    }
+
+    $settings = array(
+        'enabled'     => !empty($params['enabled']),
+        'template_id' => isset($params['templateId']) ? absint($params['templateId']) : 0,
+        'issuer_name' => isset($params['issuerName']) ? sanitize_text_field($params['issuerName']) : '',
+    );
+
+    gots_save_tutorial_cert_settings($tutorial_id, $settings);
+
+    return rest_ensure_response(gots_get_tutorial_cert_settings($tutorial_id));
+}
+
+/**
+ * GET /tutorials/{id}/certificate-settings
+ */
+function gots_rest_get_tutorial_cert_settings_endpoint($request) {
+    $tutorial_id = absint($request->get_param('id'));
+
+    $post = get_post($tutorial_id);
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error('tutorial_not_found', 'Tutorial not found.', array('status' => 404));
+    }
+
+    return rest_ensure_response(gots_get_tutorial_cert_settings($tutorial_id));
+}
+
+/**
+ * GET /tutorials/{id}/certificates
+ */
+function gots_rest_list_tutorial_certificates($request) {
+    $tutorial_id = absint($request->get_param('id'));
+
+    $post = get_post($tutorial_id);
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error('tutorial_not_found', 'Tutorial not found.', array('status' => 404));
+    }
+
+    $limit  = min(absint($request->get_param('limit')  ?: 50), 200);
+    $offset = absint($request->get_param('offset') ?: 0);
+
+    $certs = gots_get_tutorial_certificates($tutorial_id, $limit, $offset);
+
+    return rest_ensure_response(array(
+        'tutorialId'   => $tutorial_id,
+        'certificates' => $certs,
+        'count'        => count($certs),
+    ));
 }

@@ -28,9 +28,26 @@ export default function Sidebar() {
       >
         My Tutorials
       </Link>
+      <Link
+        to="/certificate-templates"
+        style={{
+          ...styles.navLink,
+          ...(isActive("/certificate-templates") ? styles.navLinkActive : {}),
+        }}
+      >
+        Certificates
+      </Link>
+      <Link
+        to="/certificate-verify"
+        style={{
+          ...styles.navLink,
+          ...(isActive("/certificate-verify") ? styles.navLinkActive : {}),
+        }}
+      >
+        Verify certificate ID
+      </Link>
       <div style={styles.navItem}>Settings</div>
 
-      {/* empty scaffolding space for future navigation items */}
       <div style={{ flexGrow: 1 }} />
     </aside>
   );

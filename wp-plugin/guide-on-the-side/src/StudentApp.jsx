@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { recordAnalyticsEvent } from "./services/analyticsApi";
+import { issueCertificate, downloadCertificate } from "./services/certificateApi";
 import { isTextAnswerCorrect } from "./services/slideValidation";
 import {
   buildSlidesById,
@@ -68,6 +69,12 @@ export default function StudentApp() {
   const [completed, setCompleted] = useState(false);
   const [certificateLoading, setCertificateLoading] = useState(false);
   const [certificateError, setCertificateError] = useState(null);
+
+  // Certificate state
+  const [recipientName, setRecipientName]   = useState("");
+  const [certLoading, setCertLoading]       = useState(false);
+  const [certError, setCertError]           = useState(null);
+  const [certDownloadUrl, setCertDownloadUrl] = useState(null);
 
   const config = getConfig();
 
@@ -144,6 +151,14 @@ export default function StudentApp() {
 
     loadTutorial();
   }, [config.tutorialId]);
+
+  // Prefill recipient name from WP user display name (logged-in users only)
+  useEffect(() => {
+    if (config.currentUserName && !recipientName) {
+      setRecipientName(config.currentUserName);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.currentUserName]);
 
   //navigation state
   const isFirstSlide = historyStack.length === 0;
@@ -401,12 +416,81 @@ export default function StudentApp() {
   }
 
   if (completed) {
+    const certEnabled = config.certificateEnabled;
+
+    const handleGenerateCert = async () => {
+      if (!recipientName.trim()) {
+        setCertError("Please enter your name before generating a certificate.");
+        return;
+      }
+      setCertLoading(true);
+      setCertError(null);
+      try {
+        const result = await issueCertificate(config.tutorialId, {
+          recipientName: recipientName.trim(),
+          idempotencyKey: `${config.tutorialId}-${Date.now()}`,
+        });
+        setCertDownloadUrl(result.downloadUrl);
+      } catch (err) {
+        setCertError(err.message || "Could not generate certificate. Please try again.");
+      } finally {
+        setCertLoading(false);
+      }
+    };
+
     return (
       <div style={styles.completionContainer}>
         <h1 style={styles.completionTitle}>Tutorial Complete!</h1>
         <p style={styles.completionMessage}>
           Good Job! You&apos;ve completed {tutorial.title}.
         </p>
+
+        {certEnabled && (
+          <div style={styles.certSection}>
+            <p style={styles.certHeading}>Download your certificate of completion</p>
+            <div style={styles.certNameRow}>
+              <label style={styles.certLabel} htmlFor="cert-recipient-name">
+                Your name on the certificate:
+              </label>
+              <input
+                id="cert-recipient-name"
+                type="text"
+                value={recipientName}
+                onChange={(e) => {
+                  setRecipientName(e.target.value);
+                  setCertError(null);
+                  setCertDownloadUrl(null);
+                }}
+                placeholder="Enter your full name"
+                style={styles.certInput}
+                maxLength={191}
+                disabled={certLoading}
+              />
+            </div>
+
+            {certError && (
+              <p style={styles.certError}>{certError}</p>
+            )}
+
+            {certDownloadUrl ? (
+              <button
+                onClick={() => downloadCertificate(certDownloadUrl, `certificate-${config.tutorialId}.pdf`)}
+                style={styles.certDownloadButton}
+              >
+                Download Certificate
+              </button>
+            ) : (
+              <button
+                onClick={handleGenerateCert}
+                disabled={certLoading}
+                style={certLoading ? { ...styles.certButton, opacity: 0.6 } : styles.certButton}
+              >
+                {certLoading ? "Generating…" : "Generate Certificate"}
+              </button>
+            )}
+          </div>
+        )}
+
         <div style={styles.completionActions}>
           <button
             onClick={() => {
@@ -415,6 +499,8 @@ export default function StudentApp() {
               setCurrentSlideId(getFirstSlideId(allSlides));
               setAnswers({});
               setFeedback({});
+              setCertDownloadUrl(null);
+              setCertError(null);
             }}
             style={styles.restartButton}
           >
@@ -756,6 +842,68 @@ const styles = {
     gap: "16px",
     flexWrap: "wrap",
     justifyContent: "center",
+  },
+  certSection: {
+    backgroundColor: "white",
+    border: "1px solid #e5e7eb",
+    borderRadius: "12px",
+    padding: "24px",
+    marginBottom: "24px",
+    width: "100%",
+    maxWidth: "480px",
+    textAlign: "left",
+  },
+  certHeading: {
+    fontSize: "16px",
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: "16px",
+  },
+  certNameRow: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+    marginBottom: "12px",
+  },
+  certLabel: {
+    fontSize: "14px",
+    color: "#374151",
+    fontWeight: "500",
+  },
+  certInput: {
+    padding: "8px 12px",
+    fontSize: "15px",
+    border: "1px solid #d1d5db",
+    borderRadius: "6px",
+    outline: "none",
+    width: "100%",
+  },
+  certError: {
+    fontSize: "14px",
+    color: "#dc2626",
+    marginBottom: "12px",
+  },
+  certButton: {
+    padding: "10px 20px",
+    fontSize: "15px",
+    fontWeight: "600",
+    backgroundColor: "#2563eb",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    cursor: "pointer",
+    width: "100%",
+  },
+  certDownloadButton: {
+    padding: "10px 20px",
+    fontSize: "15px",
+    fontWeight: "600",
+    backgroundColor: "#16a34a",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    cursor: "pointer",
+    width: "100%",
   },
   restartButton: {
     padding: "12px 24px",

@@ -36,6 +36,9 @@ require_once GOTS_PLUGIN_DIR . 'includes/enqueue.php';
 require_once GOTS_PLUGIN_DIR . 'includes/public-playback.php';
 require_once GOTS_PLUGIN_DIR . 'includes/certificate-pdf.php';
 require_once GOTS_PLUGIN_DIR . 'includes/analytics.php';
+require_once GOTS_PLUGIN_DIR . 'includes/pdf-renderer.php';
+require_once GOTS_PLUGIN_DIR . 'includes/certificate-templates.php';
+require_once GOTS_PLUGIN_DIR . 'includes/certificates.php';
 
 /**
  * the plugin activation hook
@@ -49,6 +52,10 @@ function gots_activate() {
     
     // create the analytics table
     gots_create_analytics_table();
+
+    // create the certificate tables
+    gots_create_certificate_templates_table();
+    gots_create_certificates_table();
     
     // flush rewrite rules to ensure CPT permalinks work
     flush_rewrite_rules();

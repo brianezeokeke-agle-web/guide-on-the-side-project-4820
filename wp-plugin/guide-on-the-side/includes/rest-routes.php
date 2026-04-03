@@ -73,6 +73,20 @@ function gots_register_rest_routes() {
         ),
     ));
 
+    // POST /tutorials/{id}/duplicate - create a copy of an existing tutorial
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/duplicate', array(
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'gots_rest_duplicate_tutorial',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+        'args'                => array(
+            'id' => array(
+                'validate_callback' => function($param) {
+                    return is_numeric($param);
+                },
+            ),
+        ),
+    ));
+
     // GET /tutorials/{id}/public - get a tutorial for public playback (no authentication needed)
     register_rest_route($namespace, '/tutorials/(?P<id>\d+)/public', array(
         'methods'             => WP_REST_Server::READABLE,
@@ -119,6 +133,57 @@ function gots_register_rest_routes() {
             ),
         ),
     ));
+
+    //analytics endpoints begin from here
+
+    // POST /analytics/event - to record an anonymous analytics event. this needs no auth
+    register_rest_route($namespace, '/analytics/event', array(
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'gots_rest_record_analytics_event',
+        'permission_callback' => 'gots_rest_permissions_check_public',
+    ));
+
+    // GET /tutorials/{id}/analytics/summary - get the tutorial summary (admin)
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/analytics/summary', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_get_analytics_summary',
+        'permission_callback' => 'gots_rest_permissions_check_read',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // GET /tutorials/{id}/analytics/trend - get the daily trend data (admin)
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/analytics/trend', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_get_analytics_trend',
+        'permission_callback' => 'gots_rest_permissions_check_read',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // GET /tutorials/{id}/analytics/slides - get the slide performance data (admin)
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/analytics/slides', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_get_analytics_slides',
+        'permission_callback' => 'gots_rest_permissions_check_read',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+            'dateFrom' => array(
+                'required' => false,
+                'validate_callback' => function($p) {
+                    return preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $p);
+                },
+            ),
+            'dateTo' => array(
+                'required' => false,
+                'validate_callback' => function($p) {
+                    return preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $p);
+                },
+            ),
+        ),
+    ));
 }
 
 /**
@@ -145,58 +210,57 @@ function gots_rest_permissions_check_read($request) {
         );
     }
     
-    return true;
-}
+    //analytics endpoints begin from here
 
-/**
- * permission check for public read operations (student playback)
- * always returns true - visibility is enforced in the callback
- *
- * @param WP_REST_Request $request Request object
- * @return bool
- */
-function gots_rest_permissions_check_public($request) {
-    return true;
-}
+    // POST /analytics/event - to record an anonymous analytics event. this needs no auth
+    register_rest_route($namespace, '/analytics/event', array(
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'gots_rest_record_analytics_event',
+        'permission_callback' => 'gots_rest_permissions_check_public',
+    ));
 
-/**
- * permission check for write operations
- *
- * @param WP_REST_Request $request Request object
- * @return bool|WP_Error
- */
-function gots_rest_permissions_check_write($request) {
-    // require authentication
-    if (!is_user_logged_in()) {
-        return new WP_Error(
-            'rest_not_logged_in',
-            __('You must be logged in to modify tutorials.', 'guide-on-the-side'),
-            array('status' => 401)
-        );
-    }
-    
-    // require edit_posts capability
-    if (!current_user_can('edit_posts')) {
-        return new WP_Error(
-            'rest_forbidden',
-            __('You do not have permission to modify tutorials.', 'guide-on-the-side'),
-            array('status' => 403)
-        );
-    }
-    
-    return true;
-}
+    // GET /tutorials/{id}/analytics/summary - get the tutorial summary (admin)
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/analytics/summary', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_get_analytics_summary',
+        'permission_callback' => 'gots_rest_permissions_check_read',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
 
-/**
- * get argument definitions for tutorial creation
- *
- * @return array argument definitions
- */
-function gots_get_tutorial_create_args() {
-    return array(
-        'title' => array(
-            'required'          => true,
-            'type'              => 'string',
+    // GET /tutorials/{id}/analytics/trend - get the daily trend data (admin)
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/analytics/trend', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_get_analytics_trend',
+        'permission_callback' => 'gots_rest_permissions_check_read',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // GET /tutorials/{id}/analytics/slides - get the slide performance data (admin)
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/analytics/slides', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_get_analytics_slides',
+        'permission_callback' => 'gots_rest_permissions_check_read',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+            'dateFrom' => array(
+                'required' => false,
+                'validate_callback' => function($p) {
+                    return preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $p);
+                },
+            ),
+            'dateTo' => array(
+                'required' => false,
+                'validate_callback' => function($p) {
+                    return preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $p);
+                },
+            ),
+        ),
+    ));
+}
             'sanitize_callback' => 'sanitize_text_field',
             'validate_callback' => function($param) {
                 return !empty(trim($param));
@@ -428,11 +492,62 @@ function gots_rest_update_tutorial($request) {
         );
     }
     
+    // published tutorials are locked — only archiving is allowed
+    if ($post->post_status === 'publish') {
+        $allowed_keys = array('archived');
+        $submitted_keys = array_keys($params);
+        $disallowed = array_diff($submitted_keys, $allowed_keys);
+        if (!empty($disallowed)) {
+            return new WP_Error(
+                'tutorial_locked',
+                __('Published tutorials cannot be modified. Only archiving is allowed.', 'guide-on-the-side'),
+                array('status' => 403)
+            );
+        }
+    }
+    
     // validate and sanitize input
     $sanitized = gots_sanitize_tutorial_data($params, false);
     
     if (is_wp_error($sanitized)) {
         return $sanitized;
+    }
+    
+    // block publishing if any slide has empty content panes or invalid branch configs
+    if (isset($sanitized['status']) && $sanitized['status'] === 'publish') {
+        $slides_json = get_post_meta($id, '_gots_slides', true);
+        $slides = !empty($slides_json) ? json_decode($slides_json, true) : array();
+        // Merge any incoming slide updates first so all subsequent checks run
+        // against the final state rather than potentially stale stored slides.
+        $slides_to_validate = $slides;
+        if (!empty($sanitized['slides'])) {
+            $slides_to_validate = gots_merge_slides($slides, $sanitized['slides']);
+        }
+        if (!is_array($slides_to_validate) || empty($slides_to_validate) || gots_has_empty_slides($slides_to_validate)) {
+            return new WP_Error(
+                'empty_slides',
+                __('Cannot publish: one or more slides have empty content panes. Please fill in all slide content before publishing.', 'guide-on-the-side'),
+                array('status' => 422)
+            );
+        }
+        $regular_slide_count = count(array_filter($slides_to_validate, function($s) {
+            return empty($s['isBranchSlide']);
+        }));
+        if ($regular_slide_count < 2) {
+            return new WP_Error(
+                'insufficient_slides',
+                __('Cannot publish: a tutorial must have at least 2 slides (not counting conditional branch slides).', 'guide-on-the-side'),
+                array('status' => 422)
+            );
+        }
+        $branch_errors = gots_validate_branch_configs($slides_to_validate);
+        if (!empty($branch_errors)) {
+            return new WP_Error(
+                'invalid_branch_config',
+                __('Cannot publish: one or more branch slide configurations are invalid. Please fix all branch conditions before publishing.', 'guide-on-the-side'),
+                array('status' => 422, 'branch_errors' => $branch_errors)
+            );
+        }
     }
     
     // prepare post update data
@@ -591,6 +706,143 @@ function gots_rest_update_tutorial($request) {
 }
 
 /**
+ * function to duplicate an existing tutorial
+ * creates an exact copy as a draft with "Copy of" prepended to the existing title
+ *
+ * @param WP_REST_Request $request Request object
+ * @return WP_REST_Response|WP_Error
+ */
+function gots_rest_duplicate_tutorial($request) {
+    $id = (int) $request->get_param('id');
+
+    // get the existing post
+    $post = get_post($id);
+
+    // check if post exists and is the correct type
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error(
+            'tutorial_not_found',
+            __('Tutorial not found.', 'guide-on-the-side'),
+            array('status' => 404)
+        );
+    }
+
+    // check post status (only draft and publish are valid)
+    if (!in_array($post->post_status, array('draft', 'publish'), true)) {
+        return new WP_Error(
+            'tutorial_not_found',
+            __('Tutorial not found.', 'guide-on-the-side'),
+            array('status' => 404)
+        );
+    }
+
+    // create the duplicate post as a draft
+    $new_post_data = array(
+        'post_type'   => 'gots_tutorial',
+        'post_title'  => 'Copy of ' . $post->post_title,
+        'post_status' => 'draft',
+        'post_author' => get_current_user_id(),
+    );
+
+    $new_post_id = wp_insert_post($new_post_data, true);
+
+    if (is_wp_error($new_post_id)) {
+        return new WP_Error(
+            'duplicate_failed',
+            __('Failed to duplicate tutorial.', 'guide-on-the-side'),
+            array('status' => 500)
+        );
+    }
+
+    // copy the description meta
+    $description = get_post_meta($id, '_gots_description', true);
+    update_post_meta($new_post_id, '_gots_description', $description ?: '');
+
+    // set archived flag to false by default for the copy
+    update_post_meta($new_post_id, '_gots_archived', 0);
+
+    // copy the slides, but generate new slide IDs so the copy is independent
+    $slides_json = get_post_meta($id, '_gots_slides', true);
+    $slides = array();
+    if (!empty($slides_json)) {
+        $decoded = json_decode($slides_json, true);
+        if (is_array($decoded)) {
+            $slides = $decoded;
+        }
+    }
+
+    // assign new UUIDs to each slide so edits to the copy don't clash with the existing tut
+    // build old→new ID map first so branch relationships can be remapped
+    $id_map = array();
+    foreach ($slides as $slide) {
+        $id_map[$slide['slideId']] = gots_generate_uuid();
+    }
+    foreach ($slides as &$slide) {
+        $slide['slideId'] = $id_map[$slide['slideId']];
+        // remap branch parent reference
+        if (!empty($slide['branchParentSlideId']) && isset($id_map[$slide['branchParentSlideId']])) {
+            $slide['branchParentSlideId'] = $id_map[$slide['branchParentSlideId']];
+        }
+        // remap sourceSlideId inside branchConfig
+        if (!empty($slide['branchConfig']['sourceSlideId']) && isset($id_map[$slide['branchConfig']['sourceSlideId']])) {
+            $slide['branchConfig']['sourceSlideId'] = $id_map[$slide['branchConfig']['sourceSlideId']];
+        }
+    }
+    unset($slide);
+
+    // save the duplicated slides
+    if (!empty($slides)) {
+        $slides_to_save = $slides;
+    } else {
+        // if the original had no slides, create 2 empty ones by default like a new tutorial
+        $slides_to_save = array(
+            gots_create_empty_slide(1),
+            gots_create_empty_slide(2),
+        );
+    }
+
+    $slides_json_to_save = wp_json_encode($slides_to_save);
+    // Write slides JSON directly to the postmeta table to avoid WP meta handling
+    // corrupting JSON that contains HTML/escaped quotes (same as slides-merge path).
+    global $wpdb;
+    $existing_meta_id = $wpdb->get_var(
+        $wpdb->prepare(
+            "SELECT meta_id FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key = '_gots_slides' LIMIT 1",
+            $new_post_id
+        )
+    );
+    if ($existing_meta_id) {
+        $saved = $wpdb->update(
+            $wpdb->postmeta,
+            array('meta_value' => $slides_json_to_save),
+            array('meta_id' => $existing_meta_id),
+            array('%s'),
+            array('%d')
+        );
+    } else {
+        $saved = $wpdb->insert(
+            $wpdb->postmeta,
+            array('post_id' => $new_post_id, 'meta_key' => '_gots_slides', 'meta_value' => $slides_json_to_save),
+            array('%d', '%s', '%s')
+        );
+    }
+    if ($saved === false) {
+        return new WP_Error(
+            'duplicate_slides_failed',
+            __('Failed to save slides for the duplicated tutorial.', 'guide-on-the-side'),
+            array('status' => 500)
+        );
+    }
+    wp_cache_delete($new_post_id, 'post_meta');
+    clean_post_cache($new_post_id);
+
+    // get the created post and return the formatted response
+    $new_post = get_post($new_post_id);
+
+    return rest_ensure_response(gots_format_tutorial_response($new_post));
+}
+
+/**
  * delete a tutorial permanently
  *
  * @param WP_REST_Request $request Request object
@@ -631,4 +883,158 @@ function gots_rest_delete_tutorial($request) {
         'deleted' => true,
         'tutorialId' => (string) $id,
     ));
+}
+
+//analytics REST callbacks 
+
+//Record an anonymous analytics event, this endpoint is public
+function gots_rest_record_analytics_event($request) {
+    $params = $request->get_json_params();
+
+    $tutorial_id = isset($params['tutorialId']) ? absint($params['tutorialId']) : 0;
+    $event_type  = isset($params['eventType']) ? sanitize_text_field($params['eventType']) : '';
+    $slide_id    = isset($params['slideId']) ? sanitize_text_field($params['slideId']) : null;
+    $token       = isset($params['token']) ? sanitize_text_field($params['token']) : '';
+
+    if (!$tutorial_id || !$event_type) {
+        return new WP_Error(
+            'invalid_event',
+            __('tutorialId and eventType are required.', 'guide-on-the-side'),
+            array('status' => 400)
+        );
+    }
+
+    // Verify the HMAC token matches — rejects requests not originating from a real playback page
+    $expected_token = hash_hmac('sha256', 'gots_analytics_' . $tutorial_id, wp_salt('auth'));
+    if (!hash_equals($expected_token, $token)) {
+        return new WP_Error(
+            'invalid_token',
+            __('Invalid analytics token.', 'guide-on-the-side'),
+            array('status' => 403)
+        );
+    }
+
+    // Simple rate limit — max 60 events per IP per minute via a transient
+    $ip_hash    = md5($_SERVER['REMOTE_ADDR'] ?? 'unknown');
+    $rate_key   = 'gots_rate_' . $ip_hash;
+    $rate_count = (int) get_transient($rate_key);
+    if ($rate_count >= 60) {
+        return new WP_Error(
+            'rate_limited',
+            __('Too many requests. Please slow down.', 'guide-on-the-side'),
+            array('status' => 429)
+        );
+    }
+    set_transient($rate_key, $rate_count + 1, 60);
+
+    // Verify that the tutorial exists
+    $post = get_post($tutorial_id);
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error(
+            'tutorial_not_found',
+            __('Tutorial not found.', 'guide-on-the-side'),
+            array('status' => 404)
+        );
+    }
+
+    $success = gots_record_analytics_event($tutorial_id, $event_type, $slide_id);
+
+    if (!$success) {
+        return new WP_Error(
+            'event_failed',
+            __('Failed to record event.', 'guide-on-the-side'),
+            array('status' => 400)
+        );
+    }
+
+    return rest_ensure_response(array('recorded' => true));
+}
+
+/**
+ * Parse common date range params from request.
+ *
+ * @param WP_REST_Request $request
+ * @return array {date_from, date_to}
+ */
+function gots_parse_date_range_params($request) {
+    $date_from = $request->get_param('dateFrom');
+    $date_to   = $request->get_param('dateTo');
+
+    // Vvalidate format and also calendar correctness will reject invalid dates like 2026-99-99
+    $validate_date = function($str) {
+        if (!$str) return null;
+        $dt = \DateTime::createFromFormat('Y-m-d', $str);
+        return ($dt && $dt->format('Y-m-d') === $str) ? $str : null;
+    };
+    $date_from = $validate_date($date_from);
+    $date_to   = $validate_date($date_to);
+
+    // normalize range: if both dates are present and out of order, swap them
+    if ($date_from && $date_to && $date_from > $date_to) {
+        $tmp       = $date_from;
+        $date_from = $date_to;
+        $date_to   = $tmp;
+    }
+
+    return array('date_from' => $date_from, 'date_to' => $date_to);
+}
+
+/**
+ * GET /tutorials/{id}/analytics/summary
+ *
+ * @param WP_REST_Request $request
+ * @return WP_REST_Response|WP_Error
+ */
+function gots_rest_get_analytics_summary($request) {
+    $id = absint($request->get_param('id'));
+
+    $post = get_post($id);
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error('tutorial_not_found', __('Tutorial not found.', 'guide-on-the-side'), array('status' => 404));
+    }
+
+    $range   = gots_parse_date_range_params($request);
+    $summary = gots_get_analytics_summary($id, $range['date_from'], $range['date_to']);
+
+    return rest_ensure_response($summary);
+}
+
+/**
+ * GET /tutorials/{id}/analytics/trend
+ *
+ * @param WP_REST_Request $request
+ * @return WP_REST_Response|WP_Error
+ */
+function gots_rest_get_analytics_trend($request) {
+    $id = absint($request->get_param('id'));
+
+    $post = get_post($id);
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error('tutorial_not_found', __('Tutorial not found.', 'guide-on-the-side'), array('status' => 404));
+    }
+
+    $range = gots_parse_date_range_params($request);
+    $trend = gots_get_analytics_trend($id, $range['date_from'], $range['date_to']);
+
+    return rest_ensure_response($trend);
+}
+
+/**
+ * GET /tutorials/{id}/analytics/slides
+ *
+ * @param WP_REST_Request $request
+ * @return WP_REST_Response|WP_Error
+ */
+function gots_rest_get_analytics_slides($request) {
+    $id = absint($request->get_param('id'));
+
+    $post = get_post($id);
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error('tutorial_not_found', __('Tutorial not found.', 'guide-on-the-side'), array('status' => 404));
+    }
+
+    $range  = gots_parse_date_range_params($request);
+    $slides = gots_get_slide_performance($id, $range['date_from'], $range['date_to']);
+
+    return rest_ensure_response($slides);
 }

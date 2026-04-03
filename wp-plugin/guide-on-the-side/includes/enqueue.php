@@ -101,6 +101,12 @@ function gots_enqueue_admin_scripts($hook) {
         'adminUrl' => admin_url(),
         'pluginUrl' => GOTS_PLUGIN_URL,
         'siteUrl'  => home_url(),
+        // The server's "today" in the WP-configured timezone (YYYY-MM-DD).
+        // The frontend uses this to anchor date-range filters so that
+        // "Last 7 Days" etc. always agree with the dates stored in the
+        // analytics table — regardless of the browser's local timezone.
+        //this is very important :0
+        'serverToday' => current_time('Y-m-d'),
     );
     
     // if script is enqueued, localize it

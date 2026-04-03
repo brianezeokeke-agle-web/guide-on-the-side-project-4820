@@ -41,12 +41,200 @@ function gots_generate_uuid() {
  */
 function gots_create_empty_slide($order) {
     return array(
-        'slideId'   => gots_generate_uuid(),
-        'title'     => sprintf('Slide %d', $order),
-        'order'     => $order,
-        'leftPane'  => null,
-        'rightPane' => null,
+        'slideId'             => gots_generate_uuid(),
+        'title'               => sprintf('Slide %d', $order),
+        'order'               => $order,
+        'leftPane'            => null,
+        'rightPane'           => null,
+        'isBranchSlide'       => false,
+        'branchParentSlideId' => null,
+        'branchConfig'        => null,
     );
+}
+
+// Returns true if a pane is null, has no type, or is missing type-specific content.
+function gots_is_pane_empty($pane) {
+    if (!is_array($pane) || empty($pane['type'])) return true;
+    $data = isset($pane['data']) && is_array($pane['data']) ? $pane['data'] : array();
+    switch ($pane['type']) {
+        case 'text':
+            $content = isset($data['content']) ? $data['content'] : '';
+            return trim(strip_tags($content)) === '';
+        case 'question':
+        case 'textQuestion':
+            $title = isset($data['questionTitle']) ? trim($data['questionTitle']) : '';
+            return $title === '';
+        case 'embed':
+            $url = isset($data['url']) ? trim($data['url']) : '';
+            return $url === '';
+        case 'media':
+            return empty($data['url']);
+        default:
+            return true;
+    }
+}
+
+// Returns true when at least one slide has an empty left or right pane.
+// Branch slides are included in this check — they still need content.
+function gots_has_empty_slides($slides) {
+    if (empty($slides)) return true;
+    foreach ($slides as $slide) {
+        $left  = isset($slide['leftPane'])  ? $slide['leftPane']  : null;
+        $right = isset($slide['rightPane']) ? $slide['rightPane'] : null;
+        if (gots_is_pane_empty($left) || gots_is_pane_empty($right)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Validate all branch configurations in a slides array.
+ * Returns an array of error strings; empty array means all configs are valid.
+ *
+ * @param array $slides
+ * @return array  Error messages (empty if clean)
+ */
+function gots_validate_branch_configs($slides) {
+    if (!is_array($slides)) return array();
+
+    // Build look-up maps
+    $slides_by_id   = array();
+    $children_by_id = array(); // parentId- array of branch children
+    foreach ($slides as $slide) {
+        if (!isset($slide['slideId'])) continue;
+        $slides_by_id[$slide['slideId']] = $slide;
+        if (!empty($slide['isBranchSlide']) && !empty($slide['branchParentSlideId'])) {
+            $pid = $slide['branchParentSlideId'];
+            if (!isset($children_by_id[$pid])) $children_by_id[$pid] = array();
+            $children_by_id[$pid][] = $slide;
+        }
+    }
+
+    $errors = array();
+
+    foreach ($slides as $slide) {
+        if (empty($slide['isBranchSlide'])) continue;
+
+        $sid = isset($slide['slideId']) ? $slide['slideId'] : '(unknown)';
+
+        // a parent must exist for a branch question
+        if (empty($slide['branchParentSlideId'])) {
+            $errors[] = sprintf('Slide "%s": branch slide must have a parent slide.', $sid);
+            continue;
+        }
+        $pid    = $slide['branchParentSlideId'];
+        $parent = isset($slides_by_id[$pid]) ? $slides_by_id[$pid] : null;
+        if (!$parent) {
+            $errors[] = sprintf('Slide "%s": parent slide "%s" does not exist.', $sid, $pid);
+            continue;
+        }
+
+        $cfg = isset($slide['branchConfig']) && is_array($slide['branchConfig'])
+             ? $slide['branchConfig'] : null;
+
+        if (!$cfg) {
+            $errors[] = sprintf('Slide "%s": branch condition is required for conditional slides.', $sid);
+            continue;
+        }
+
+        // sourceSlideId must equal the branchParentSlideId
+        $source_id = isset($cfg['sourceSlideId']) ? $cfg['sourceSlideId'] : '';
+        if ($source_id !== $pid) {
+            $errors[] = sprintf('Slide "%s": sourceSlideId must equal branchParentSlideId (v1 constraint).', $sid);
+            continue;
+        }
+
+        // source slide must be a question slide (we cant collect input via the rich text editor)
+        $source = isset($slides_by_id[$source_id]) ? $slides_by_id[$source_id] : null;
+        if (!$source) {
+            $errors[] = sprintf('Slide "%s": source slide does not exist.', $sid);
+            continue;
+        }
+        $source_pane = isset($source['leftPane']) && is_array($source['leftPane']) ? $source['leftPane'] : null;
+        $source_type = isset($source_pane['type']) ? $source_pane['type'] : '';
+        if (!in_array($source_type, array('question', 'textQuestion'), true)) {
+            $errors[] = sprintf('Slide "%s": source slide must be a question slide (MCQ or text question).', $sid);
+            continue;
+        }
+
+        $operator  = isset($cfg['operator'])   ? $cfg['operator']   : '';
+        $matchType = isset($cfg['matchType'])  ? $cfg['matchType']  : '';
+        $optionId  = isset($cfg['optionId'])   ? $cfg['optionId']   : null;
+        $correct   = isset($cfg['correctness'])? $cfg['correctness']: null;
+
+        if ($source_type === 'textQuestion') {
+            if ($operator !== 'isNot' || $matchType !== 'correctness' || $correct !== 'correct') {
+                $errors[] = sprintf('Slide "%s": text question sources only support "is not correct" branching.', $sid);
+            }
+            if ($optionId !== null) {
+                $errors[] = sprintf('Slide "%s": correctness-based branches must not have an optionId set.', $sid);
+            }
+        } elseif ($source_type === 'question') {
+            if ($operator === 'is') {
+                if ($matchType !== 'option' || empty($optionId)) {
+                    $errors[] = sprintf('Slide "%s": MCQ "is" operator requires a specific wrong option.', $sid);
+                } else {
+                    // verify that optionId exists and is not the correct option
+                    $pane_data   = isset($source_pane['data']) && is_array($source_pane['data']) ? $source_pane['data'] : array();
+                    $options     = isset($pane_data['options']) && is_array($pane_data['options']) ? $pane_data['options'] : array();
+                    $correct_id  = isset($pane_data['correctOptionId']) ? $pane_data['correctOptionId'] : null;
+                    $option_ids  = array_column($options, 'id');
+                    if (!in_array($optionId, $option_ids, true)) {
+                        $errors[] = sprintf('Slide "%s": option "%s" no longer exists on the source slide.', $sid, $optionId);
+                    } elseif ($optionId === $correct_id) {
+                        $errors[] = sprintf('Slide "%s": cannot branch on the correct option.', $sid);
+                    }
+                }
+            } elseif ($operator === 'isNot') {
+                if ($matchType !== 'correctness' || $correct !== 'correct') {
+                    $errors[] = sprintf('Slide "%s": MCQ "is not" operator must use correctness="correct".', $sid);
+                }
+                if ($optionId !== null) {
+                    $errors[] = sprintf('Slide "%s": correctness-based branches must not have an optionId set.', $sid);
+                }
+            } else {
+                $errors[] = sprintf('Slide "%s": invalid branch operator "%s".', $sid, $operator);
+            }
+        }
+
+        // cycle detection: walk the ancestry chain and error if we revisit a slide
+        $visited  = array();
+        $ancestor = $slide;
+        $has_cycle = false;
+        while ($ancestor && !empty($ancestor['isBranchSlide']) && !empty($ancestor['branchParentSlideId'])) {
+            $ancestor_id = $ancestor['slideId'];
+            if (isset($visited[$ancestor_id])) {
+                $has_cycle = true;
+                break;
+            }
+            $visited[$ancestor_id] = true;
+            $ancestor = isset($slides_by_id[$ancestor['branchParentSlideId']]) ? $slides_by_id[$ancestor['branchParentSlideId']] : null;
+        }
+        if ($has_cycle) {
+            $errors[] = sprintf('Slide "%s": cycle detected in branch ancestry chain. A slide cannot be its own ancestor.', $sid);
+            continue;
+        }
+
+        // duplicate-condition check among siblings, so we dont break the playback
+        $siblings = isset($children_by_id[$pid]) ? $children_by_id[$pid] : array();
+        foreach ($siblings as $sib) {
+            if ($sib['slideId'] === $sid) continue;
+            $sib_cfg = isset($sib['branchConfig']) && is_array($sib['branchConfig']) ? $sib['branchConfig'] : null;
+            if (!$sib_cfg) continue;
+            if (
+                (isset($sib_cfg['operator'])    ? $sib_cfg['operator']    : '') === $operator  &&
+                (isset($sib_cfg['matchType'])   ? $sib_cfg['matchType']   : '') === $matchType &&
+                (isset($sib_cfg['optionId'])    ? $sib_cfg['optionId']    : null) === $optionId &&
+                (isset($sib_cfg['correctness']) ? $sib_cfg['correctness'] : null) === $correct
+            ) {
+                $errors[] = sprintf('Slide "%s": duplicate branch condition exists for parent "%s".', $sid, $pid);
+                break;
+            }
+        }
+    }
+
+    return $errors;
 }
 
 /**
@@ -95,7 +283,7 @@ function gots_merge_slides($existing_slides, $incoming_slides) {
         if (isset($existing_map[$slide_id])) {
             // merge with existing slide - shallow merge where incoming overwrites
             $merged = $existing_map[$slide_id];
-            
+
             // merge each field if present in incoming
             if (array_key_exists('title', $incoming)) {
                 $merged['title'] = $incoming['title'];
@@ -109,20 +297,33 @@ function gots_merge_slides($existing_slides, $incoming_slides) {
             if (array_key_exists('rightPane', $incoming)) {
                 $merged['rightPane'] = $incoming['rightPane'];
             }
-            
+            // branch fields
+            if (array_key_exists('isBranchSlide', $incoming)) {
+                $merged['isBranchSlide'] = (bool) $incoming['isBranchSlide'];
+            }
+            if (array_key_exists('branchParentSlideId', $incoming)) {
+                $merged['branchParentSlideId'] = $incoming['branchParentSlideId'];
+            }
+            if (array_key_exists('branchConfig', $incoming)) {
+                $merged['branchConfig'] = $incoming['branchConfig'];
+            }
+
             // ensure that slideId is preserved (immutable)
             $merged['slideId'] = $slide_id;
-            
+
             $existing_map[$slide_id] = $merged;
             $updated_ids[] = $slide_id;
         } else {
             // new slide - append it
             $new_slide = array(
-                'slideId'   => $slide_id,
-                'title'     => isset($incoming['title']) ? $incoming['title'] : 'Untitled Slide',
-                'order'     => isset($incoming['order']) ? $incoming['order'] : count($existing_map) + 1,
-                'leftPane'  => isset($incoming['leftPane']) ? $incoming['leftPane'] : null,
-                'rightPane' => isset($incoming['rightPane']) ? $incoming['rightPane'] : null,
+                'slideId'             => $slide_id,
+                'title'               => isset($incoming['title']) ? $incoming['title'] : 'Untitled Slide',
+                'order'               => isset($incoming['order']) ? $incoming['order'] : count($existing_map) + 1,
+                'leftPane'            => isset($incoming['leftPane']) ? $incoming['leftPane'] : null,
+                'rightPane'           => isset($incoming['rightPane']) ? $incoming['rightPane'] : null,
+                'isBranchSlide'       => isset($incoming['isBranchSlide']) ? (bool) $incoming['isBranchSlide'] : false,
+                'branchParentSlideId' => isset($incoming['branchParentSlideId']) ? $incoming['branchParentSlideId'] : null,
+                'branchConfig'        => isset($incoming['branchConfig']) ? $incoming['branchConfig'] : null,
             );
             $existing_map[$slide_id] = $new_slide;
         }
@@ -192,9 +393,21 @@ function gots_format_tutorial_response($post) {
         }
     }
     
-    // format dates as ISO 8601
-    $created_at = get_post_time('c', true, $post);
-    $updated_at = get_post_modified_time('c', true, $post);
+    // Format dates as ISO 8601 using LOCAL time (second param = false).
+    // WordPress zeroes out post_date_gmt / post_modified_gmt for draft
+    // posts, so using GMT (true) returns "0000-00-00" or false.
+    // Local time (false) uses post_date / post_modified which WP always
+    // populates regardless of post status.
+    $created_at = get_post_time('c', false, $post);
+    $updated_at = get_post_modified_time('c', false, $post);
+
+    // fallback here: if either is still falsy, just use the other (or current time)
+    if (empty($created_at) || strpos($created_at, '0000') === 0) {
+        $created_at = $updated_at ?: current_time('c');
+    }
+    if (empty($updated_at) || strpos($updated_at, '0000') === 0) {
+        $updated_at = $created_at;
+    }
     
     return array(
         'tutorialId'  => (string) $post->ID,
@@ -312,15 +525,70 @@ function gots_sanitize_slides($slides) {
         if (array_key_exists('leftPane', $slide)) {
             $clean_slide['leftPane'] = gots_sanitize_pane($slide['leftPane']);
         }
-        
+
         if (array_key_exists('rightPane', $slide)) {
             $clean_slide['rightPane'] = gots_sanitize_pane($slide['rightPane']);
         }
-        
+
+        // branch fields
+        if (array_key_exists('isBranchSlide', $slide)) {
+            $clean_slide['isBranchSlide'] = (bool) $slide['isBranchSlide'];
+        }
+        if (array_key_exists('branchParentSlideId', $slide)) {
+            $clean_slide['branchParentSlideId'] = $slide['branchParentSlideId'] !== null
+                ? sanitize_text_field($slide['branchParentSlideId'])
+                : null;
+        }
+        if (array_key_exists('branchConfig', $slide)) {
+            $clean_slide['branchConfig'] = gots_sanitize_branch_config($slide['branchConfig']);
+        }
+
         $sanitized[] = $clean_slide;
     }
     
     return $sanitized;
+}
+
+/**
+ * Sanitize a branchConfig object.
+ * Returns null if the input is null or invalid.
+ *
+ * @param mixed $cfg Raw branch config
+ * @return array|null
+ */
+function gots_sanitize_branch_config($cfg) {
+    if ($cfg === null) return null;
+    if (!is_array($cfg)) return null;
+
+    $allowed_operators  = array('is', 'isNot');
+    $allowed_matchtypes = array('option', 'correctness');
+    $allowed_correct    = array('correct', 'incorrect');
+
+    $clean = array();
+
+    if (isset($cfg['sourceSlideId'])) {
+        $clean['sourceSlideId'] = sanitize_text_field($cfg['sourceSlideId']);
+    }
+    if (isset($cfg['operator']) && in_array($cfg['operator'], $allowed_operators, true)) {
+        $clean['operator'] = $cfg['operator'];
+    }
+    if (isset($cfg['matchType']) && in_array($cfg['matchType'], $allowed_matchtypes, true)) {
+        $clean['matchType'] = $cfg['matchType'];
+    }
+    // optionId: single character like "a", "b" – allow null
+    if (array_key_exists('optionId', $cfg)) {
+        $clean['optionId'] = $cfg['optionId'] !== null
+            ? sanitize_text_field($cfg['optionId'])
+            : null;
+    }
+    // correctness: "correct" | "incorrect" | null
+    if (array_key_exists('correctness', $cfg)) {
+        $clean['correctness'] = ($cfg['correctness'] !== null && in_array($cfg['correctness'], $allowed_correct, true))
+            ? $cfg['correctness']
+            : null;
+    }
+
+    return !empty($clean) ? $clean : null;
 }
 
 /**

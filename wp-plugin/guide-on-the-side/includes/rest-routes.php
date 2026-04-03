@@ -210,57 +210,58 @@ function gots_rest_permissions_check_read($request) {
         );
     }
     
-    //analytics endpoints begin from here
-
-    // POST /analytics/event - to record an anonymous analytics event. this needs no auth
-    register_rest_route($namespace, '/analytics/event', array(
-        'methods'             => WP_REST_Server::CREATABLE,
-        'callback'            => 'gots_rest_record_analytics_event',
-        'permission_callback' => 'gots_rest_permissions_check_public',
-    ));
-
-    // GET /tutorials/{id}/analytics/summary - get the tutorial summary (admin)
-    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/analytics/summary', array(
-        'methods'             => WP_REST_Server::READABLE,
-        'callback'            => 'gots_rest_get_analytics_summary',
-        'permission_callback' => 'gots_rest_permissions_check_read',
-        'args'                => array(
-            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
-        ),
-    ));
-
-    // GET /tutorials/{id}/analytics/trend - get the daily trend data (admin)
-    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/analytics/trend', array(
-        'methods'             => WP_REST_Server::READABLE,
-        'callback'            => 'gots_rest_get_analytics_trend',
-        'permission_callback' => 'gots_rest_permissions_check_read',
-        'args'                => array(
-            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
-        ),
-    ));
-
-    // GET /tutorials/{id}/analytics/slides - get the slide performance data (admin)
-    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/analytics/slides', array(
-        'methods'             => WP_REST_Server::READABLE,
-        'callback'            => 'gots_rest_get_analytics_slides',
-        'permission_callback' => 'gots_rest_permissions_check_read',
-        'args'                => array(
-            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
-            'dateFrom' => array(
-                'required' => false,
-                'validate_callback' => function($p) {
-                    return preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $p);
-                },
-            ),
-            'dateTo' => array(
-                'required' => false,
-                'validate_callback' => function($p) {
-                    return preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $p);
-                },
-            ),
-        ),
-    ));
+    return true;
 }
+
+/**
+ * permission check for public read operations (student playback)
+ * always returns true - visibility is enforced in the callback
+ *
+ * @param WP_REST_Request $request Request object
+ * @return bool
+ */
+function gots_rest_permissions_check_public($request) {
+    return true;
+}
+
+/**
+ * permission check for write operations
+ *
+ * @param WP_REST_Request $request Request object
+ * @return bool|WP_Error
+ */
+function gots_rest_permissions_check_write($request) {
+    // require authentication
+    if (!is_user_logged_in()) {
+        return new WP_Error(
+            'rest_not_logged_in',
+            __('You must be logged in to modify tutorials.', 'guide-on-the-side'),
+            array('status' => 401)
+        );
+    }
+    
+    // require edit_posts capability
+    if (!current_user_can('edit_posts')) {
+        return new WP_Error(
+            'rest_forbidden',
+            __('You do not have permission to modify tutorials.', 'guide-on-the-side'),
+            array('status' => 403)
+        );
+    }
+    
+    return true;
+}
+
+/**
+ * get argument definitions for tutorial creation
+ *
+ * @return array argument definitions
+ */
+function gots_get_tutorial_create_args() {
+    return array(
+        'title' => array(
+            'required'          => true,
+            'type'              => 'string',
             'sanitize_callback' => 'sanitize_text_field',
             'validate_callback' => function($param) {
                 return !empty(trim($param));

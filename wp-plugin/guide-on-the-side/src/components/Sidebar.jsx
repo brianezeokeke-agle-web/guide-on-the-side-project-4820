@@ -38,6 +38,15 @@ export default function Sidebar() {
         Certificates
       </Link>
       <Link
+        to="/tutorial-themes"
+        style={{
+          ...styles.navLink,
+          ...(isActive("/tutorial-themes") ? styles.navLinkActive : {}),
+        }}
+      >
+        Tutorial Themes
+      </Link>
+      <Link
         to="/certificate-verify"
         style={{
           ...styles.navLink,

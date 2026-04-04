@@ -264,6 +264,63 @@ function gots_register_rest_routes() {
         ),
     ));
 
+    //Tutorial theme routes 
+
+    // GET  /tutorial-themes         — list all active themes (admin)
+    register_rest_route($namespace, '/tutorial-themes', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_list_tutorial_themes',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+    ));
+
+    // POST /tutorial-themes         — create a theme (admin)
+    register_rest_route($namespace, '/tutorial-themes', array(
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'gots_rest_create_tutorial_theme',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+    ));
+
+    // PUT  /tutorial-themes/{id}    — update a theme (admin)
+    register_rest_route($namespace, '/tutorial-themes/(?P<id>\d+)', array(
+        'methods'             => WP_REST_Server::EDITABLE,
+        'callback'            => 'gots_rest_update_tutorial_theme',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // DELETE /tutorial-themes/{id}  — soft-delete a theme (admin)
+    register_rest_route($namespace, '/tutorial-themes/(?P<id>\d+)', array(
+        'methods'             => WP_REST_Server::DELETABLE,
+        'callback'            => 'gots_rest_delete_tutorial_theme',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // GET /tutorials/{id}/theme-settings — get tutorial-level theme selection (admin)
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/theme-settings', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_get_tutorial_theme_settings_endpoint',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // PUT /tutorials/{id}/theme-settings — save tutorial-level theme selection (admin)
+    // Dedicated endpoint — does NOT touch slides. Mirrors certificate-settings pattern.
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/theme-settings', array(
+        'methods'             => WP_REST_Server::EDITABLE,
+        'callback'            => 'gots_rest_update_tutorial_theme_settings',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
     //analytics endpoints begin from here
 
     // POST /analytics/event - to record an anonymous analytics event. this needs no auth
@@ -679,6 +736,16 @@ function gots_rest_update_tutorial($request) {
                 array('status' => 422, 'branch_errors' => $branch_errors)
             );
         }
+
+        // If a tutorial theme is assigned, verify it still exists and is active
+        $assigned_theme_id = (int) get_post_meta($id, '_gots_theme_id', true);
+        if ($assigned_theme_id > 0 && !gots_get_theme($assigned_theme_id)) {
+            return new WP_Error(
+                'invalid_theme',
+                __('Cannot publish: the selected tutorial theme no longer exists or has been deactivated. Please select a different theme or clear the selection.', 'guide-on-the-side'),
+                array('status' => 422)
+            );
+        }
     }
     
     // prepare post update data
@@ -900,6 +967,14 @@ function gots_rest_duplicate_tutorial($request) {
     update_post_meta($new_post_id, '_gots_certificate_template_id', $cert_template_id ?: 0);
     update_post_meta($new_post_id, '_gots_certificate_issuer_name', $cert_issuer_name ?: '');
 
+    // copy tutorial theme selection — verify the theme still exists before copying
+    // (themeOverride tokens are embedded in slides and copied automatically)
+    $theme_id = (int) get_post_meta($id, '_gots_theme_id', true);
+    if ($theme_id > 0 && !gots_get_theme($theme_id)) {
+        $theme_id = 0; // source theme was deleted; duplicate starts with no theme
+    }
+    update_post_meta($new_post_id, '_gots_theme_id', $theme_id);
+
     // copy the slides, but generate new slide IDs so the copy is independent
     $slides_json = get_post_meta($id, '_gots_slides', true);
     $slides = array();
@@ -1006,6 +1081,7 @@ function gots_rest_delete_tutorial($request) {
     delete_post_meta($id, '_gots_description');
     delete_post_meta($id, '_gots_archived');
     delete_post_meta($id, '_gots_slides');
+    delete_post_meta($id, '_gots_theme_id');
     
     // permanently delete the post (bypass trash)
     $result = wp_delete_post($id, true);
@@ -1431,13 +1507,14 @@ function gots_rest_delete_cert_template($request) {
     $params      = $request->get_json_params() ?: array();
     $confirmed   = !empty($params['confirmed']);
 
-    // If not confirmed, return usage info so the frontend can warn the user
-    $affected = gots_get_tutorials_using_template($template_id);
-    if (!$confirmed && !empty($affected)) {
+    // First call (no confirmed flag): always return usage info so the frontend
+    // can show a confirmation dialog before any data is destroyed.
+    if (!$confirmed) {
+        $affected = gots_get_tutorials_using_template($template_id);
         return rest_ensure_response(array(
             'deleted'            => false,
-            'confirmRequired'    => true,
-            'affectedTutorials'  => $affected,
+            'confirmRequired'    => !empty($affected),
+            'affectedTutorials'  => $affected ?: array(),
         ));
     }
 
@@ -1557,6 +1634,130 @@ function gots_rest_get_tutorial_cert_settings_endpoint($request) {
     }
 
     return rest_ensure_response(gots_get_tutorial_cert_settings($tutorial_id));
+}
+
+//Tutorial theme REST callbacks 
+
+/**
+ * GET /tutorial-themes
+ */
+function gots_rest_list_tutorial_themes($request) {
+    return rest_ensure_response(gots_list_themes());
+}
+
+/**
+ * POST /tutorial-themes
+ */
+function gots_rest_create_tutorial_theme($request) {
+    $params = $request->get_json_params() ?: array();
+
+    $data = gots_validate_theme_data($params);
+    if (is_wp_error($data)) {
+        return $data;
+    }
+
+    $id = gots_create_theme($data);
+    if (is_wp_error($id)) {
+        return $id;
+    }
+
+    return rest_ensure_response(gots_get_theme($id));
+}
+
+/**
+ * PUT /tutorial-themes/{id}
+ */
+function gots_rest_update_tutorial_theme($request) {
+    $theme_id = absint($request->get_param('id'));
+    $params   = $request->get_json_params() ?: array();
+
+    $data = gots_validate_theme_data($params);
+    if (is_wp_error($data)) {
+        return $data;
+    }
+
+    $result = gots_update_theme($theme_id, $data);
+    if (is_wp_error($result)) {
+        return $result;
+    }
+
+    return rest_ensure_response(gots_get_theme($theme_id));
+}
+
+/**
+ * DELETE /tutorial-themes/{id}
+ *
+ * Mirrors the cert template delete pattern: first call returns usage info so
+ * the frontend can show a confirmation dialog; second call (confirmed=true) deletes.
+ */
+function gots_rest_delete_tutorial_theme($request) {
+    $theme_id = absint($request->get_param('id'));
+    $params   = $request->get_json_params() ?: array();
+    $confirmed = !empty($params['confirmed']);
+
+    // First call (no confirmed flag): always return usage info so the frontend
+    // can show a confirmation dialog before any data is destroyed.
+    if (!$confirmed) {
+        $affected = gots_get_tutorials_using_theme($theme_id);
+        return rest_ensure_response(array(
+            'deleted'           => false,
+            'confirmRequired'   => !empty($affected),
+            'affectedTutorials' => $affected ?: array(),
+        ));
+    }
+
+    $result = gots_delete_theme($theme_id);
+    if (is_wp_error($result)) {
+        return $result;
+    }
+
+    return rest_ensure_response(array('deleted' => true, 'id' => $theme_id));
+}
+
+/**
+ * GET /tutorials/{id}/theme-settings
+ */
+function gots_rest_get_tutorial_theme_settings_endpoint($request) {
+    $tutorial_id = absint($request->get_param('id'));
+
+    $post = get_post($tutorial_id);
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error('tutorial_not_found', 'Tutorial not found.', array('status' => 404));
+    }
+
+    return rest_ensure_response(gots_get_tutorial_theme_settings($tutorial_id));
+}
+
+/**
+ * PUT /tutorials/{id}/theme-settings
+ *
+ * Dedicated endpoint — only writes _gots_theme_id. Never touches slides.
+ * Mirrors gots_rest_update_tutorial_cert_settings() exactly.
+ */
+function gots_rest_update_tutorial_theme_settings($request) {
+    $tutorial_id = absint($request->get_param('id'));
+    $params      = $request->get_json_params() ?: array();
+
+    $post = get_post($tutorial_id);
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error('tutorial_not_found', 'Tutorial not found.', array('status' => 404));
+    }
+
+    // Sanitize and validate theme_id
+    $theme_id = isset($params['themeId']) ? absint($params['themeId']) : 0;
+
+    // If a non-zero theme_id is supplied, verify it exists and is active
+    if ($theme_id > 0 && !gots_get_theme($theme_id)) {
+        return new WP_Error(
+            'invalid_theme',
+            'The selected theme does not exist or has been deactivated.',
+            array('status' => 400)
+        );
+    }
+
+    gots_save_tutorial_theme_settings($tutorial_id, array('theme_id' => $theme_id ?: null));
+
+    return rest_ensure_response(gots_get_tutorial_theme_settings($tutorial_id));
 }
 
 /**

@@ -163,8 +163,7 @@ export default function CertificateTemplatesPage() {
         // Second call: confirmed deletion
         await deleteTemplate(template.id, { confirmed: true });
       } else if (!check.deleted) {
-        // Unexpected state
-        if (!window.confirm(`Delete template "${template.name}"? This cannot be undone.`)) return;
+        if (!window.confirm(`Delete template "${template.name}"?\n\nThis action cannot be undone.`)) return;
         await deleteTemplate(template.id, { confirmed: true });
       }
 
@@ -219,6 +218,11 @@ export default function CertificateTemplatesPage() {
             New Template
           </button>
         </div>
+
+        <p style={styles.helpText}>
+          Certificate templates define the layout and branding of completion certificates.
+          Enable certificates for a tutorial from within its settings.
+        </p>
 
         {error && <div style={styles.errorBanner}>{error}</div>}
 
@@ -494,7 +498,13 @@ const styles = {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
+    marginBottom: "8px",
+  },
+  helpText: {
+    fontSize: "14px",
+    color: "#6b7280",
     marginBottom: "24px",
+    maxWidth: "640px",
   },
   pageTitle: {
     fontSize: "24px",
@@ -537,8 +547,8 @@ const styles = {
   defaultBadge: {
     fontSize: "11px",
     fontWeight: "600",
-    backgroundColor: "#dbeafe",
-    color: "#1d4ed8",
+    backgroundColor: "#dcfce7",
+    color: "#166534",
     padding: "2px 8px",
     borderRadius: "99px",
   },

@@ -103,4 +103,17 @@ function gots_register_post_meta() {
         },
         'show_in_rest'      => false,
     ));
+
+    // tutorial theme selection meta
+    register_post_meta('gots_tutorial', '_gots_theme_id', array(
+        'type'              => 'integer',
+        'description'       => 'ID of the assigned tutorial theme template (0 = use default fallback)',
+        'single'            => true,
+        'default'           => 0,
+        'sanitize_callback' => 'absint',
+        'auth_callback'     => function() {
+            return current_user_can('edit_posts');
+        },
+        'show_in_rest'      => false,
+    ));
 }

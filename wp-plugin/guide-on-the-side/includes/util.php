@@ -307,6 +307,10 @@ function gots_merge_slides($existing_slides, $incoming_slides) {
             if (array_key_exists('branchConfig', $incoming)) {
                 $merged['branchConfig'] = $incoming['branchConfig'];
             }
+            // themeOverride: absent = preserve existing; explicit null = clear override
+            if (array_key_exists('themeOverride', $incoming)) {
+                $merged['themeOverride'] = $incoming['themeOverride'];
+            }
 
             // ensure that slideId is preserved (immutable)
             $merged['slideId'] = $slide_id;
@@ -324,6 +328,7 @@ function gots_merge_slides($existing_slides, $incoming_slides) {
                 'isBranchSlide'       => isset($incoming['isBranchSlide']) ? (bool) $incoming['isBranchSlide'] : false,
                 'branchParentSlideId' => isset($incoming['branchParentSlideId']) ? $incoming['branchParentSlideId'] : null,
                 'branchConfig'        => isset($incoming['branchConfig']) ? $incoming['branchConfig'] : null,
+                'themeOverride'       => isset($incoming['themeOverride']) ? $incoming['themeOverride'] : null,
             );
             $existing_map[$slide_id] = $new_slide;
         }
@@ -409,15 +414,26 @@ function gots_format_tutorial_response($post) {
         $updated_at = $created_at;
     }
     
+    // Read theme_id; return null if not set (existing tutorials default to no theme)
+    $raw_theme_id = (int) get_post_meta($post->ID, '_gots_theme_id', true);
+
+    // Resolve the effective theme config so the student player can apply tokens
+    // without a second round-trip. gots_resolve_tutorial_theme() never returns
+    // null — it falls back to the built-in default if no theme is assigned.
+    $resolved_theme = gots_resolve_tutorial_theme($post->ID);
+    $theme_config   = isset($resolved_theme->config_json) ? $resolved_theme->config_json : null;
+
     return array(
-        'tutorialId'  => (string) $post->ID,
-        'title'       => $post->post_title,
-        'description' => $description ?: '',
-        'status'      => gots_map_wp_status_to_api($post->post_status),
-        'archived'    => (bool) $archived,
-        'createdAt'   => $created_at,
-        'updatedAt'   => $updated_at,
-        'slides'      => $slides,
+        'tutorialId'   => (string) $post->ID,
+        'title'        => $post->post_title,
+        'description'  => $description ?: '',
+        'status'       => gots_map_wp_status_to_api($post->post_status),
+        'archived'     => (bool) $archived,
+        'createdAt'    => $created_at,
+        'updatedAt'    => $updated_at,
+        'slides'       => $slides,
+        'theme_id'     => $raw_theme_id > 0 ? $raw_theme_id : null,
+        'theme_config' => $theme_config,
     );
 }
 
@@ -543,6 +559,15 @@ function gots_sanitize_slides($slides) {
             $clean_slide['branchConfig'] = gots_sanitize_branch_config($slide['branchConfig']);
         }
 
+        // themeOverride: null clears the override; object is validated against the theme token schema
+        if (array_key_exists('themeOverride', $slide)) {
+            $sanitized_override = gots_sanitize_slide_theme_override($slide['themeOverride']);
+            if (is_wp_error($sanitized_override)) {
+                return $sanitized_override;
+            }
+            $clean_slide['themeOverride'] = $sanitized_override;
+        }
+
         $sanitized[] = $clean_slide;
     }
     
@@ -589,6 +614,55 @@ function gots_sanitize_branch_config($cfg) {
     }
 
     return !empty($clean) ? $clean : null;
+}
+
+/**
+ * Sanitize a slide-level themeOverride object.
+ *
+ * Shape when active: { enabled: true, tokens: { ...partialTokens } }
+ * Returns null if input is null, disabled, or tokens are empty/invalid.
+ * Returns WP_Error propagated up if tokens contain invalid keys/values.
+ *
+ * @param mixed $override  Raw themeOverride value from incoming slide.
+ * @return array|null|WP_Error
+ */
+function gots_sanitize_slide_theme_override($override) {
+    // Explicit null — caller wants to clear the override
+    if ($override === null) {
+        return null;
+    }
+
+    if (!is_array($override)) {
+        return null;
+    }
+
+    $enabled = !empty($override['enabled']);
+
+    if (!$enabled) {
+        // Disabled override is stored as null to keep the payload minimal
+        return null;
+    }
+
+    $raw_tokens = isset($override['tokens']) && is_array($override['tokens'])
+        ? $override['tokens']
+        : array();
+
+    // Empty tokens with enabled=true behaves like no override
+    if (empty($raw_tokens)) {
+        return null;
+    }
+
+    // Validate tokens against the theme token allowlist (prevents arbitrary CSS injection)
+    $validated_tokens = gots_validate_theme_config($raw_tokens);
+    if (is_wp_error($validated_tokens)) {
+        // Propagate the validation error up so the REST handler returns a 400
+        return $validated_tokens;
+    }
+
+    return array(
+        'enabled' => true,
+        'tokens'  => $validated_tokens,
+    );
 }
 
 /**

@@ -6,6 +6,7 @@ import TutorialEditorPage from "./pages/TutorialEditorPage";
 import TutorialAnalyticsPage from "./pages/TutorialAnalyticsPage";
 import CertificateTemplatesPage from "./pages/CertificateTemplatesPage";
 import CertificateVerifyPage from "./pages/CertificateVerifyPage";
+import TutorialThemesPage from "./pages/TutorialThemesPage";
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
       <Route path="/tutorials/:id/analytics" element={<TutorialAnalyticsPage />} />
       <Route path="/certificate-templates" element={<CertificateTemplatesPage />} />
       <Route path="/certificate-verify" element={<CertificateVerifyPage />} />
+      <Route path="/tutorial-themes" element={<TutorialThemesPage />} />
     </Routes>
   );
 }

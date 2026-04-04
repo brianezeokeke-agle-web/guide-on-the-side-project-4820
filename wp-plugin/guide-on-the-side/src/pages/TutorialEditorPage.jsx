@@ -9,6 +9,13 @@ import {
   listTemplates,
 } from "../services/certificateTemplateApi";
 import {
+  getTutorialThemeSettings,
+  saveTutorialThemeSettings,
+  listTutorialThemes,
+} from "../services/tutorialThemeApi";
+import { THEME_FIELD_DEFS, THEME_TOKEN_DEFAULTS } from "../services/themeSchema";
+import { resolveEffectiveTokens } from "../services/themeHelpers";
+import {
   buildBranchChildrenMap,
   buildRegularSlideOrder,
   buildSlidesById,
@@ -1035,6 +1042,123 @@ function BranchConfigEditor({ slide, allSlides, isPublished, onSlidePatch, onBlu
   );
 }
 
+// Collapsible per-slide theme override editor, rendered below BranchConfigEditor.
+// Lets authors override individual shell-level tokens for a single slide.
+function SlideThemeOverrideEditor({ slide, isPublished, onSlidePatch }) {
+  const [expanded, setExpanded] = useState(false);
+  const patchTimerRef   = useRef(null);
+  const pendingTokensRef = useRef(null);
+
+  const override = slide.themeOverride || { enabled: false, tokens: {} };
+  const isEnabled = override.enabled === true;
+  const tokens = override.tokens || {};
+
+  // Keep the ref current so debounced callbacks always merge into the latest base.
+  pendingTokensRef.current = tokens;
+
+  // Cancel any pending debounced save when the component unmounts (e.g. slide switch).
+  useEffect(() => () => clearTimeout(patchTimerRef.current), []);
+
+  const handleToggleEnabled = (checked) => {
+    clearTimeout(patchTimerRef.current);
+    onSlidePatch({ themeOverride: checked ? { enabled: true, tokens: {} } : null });
+  };
+
+  // Immediate persist — safe for discrete inputs (select, bool).
+  const setToken = (key, value) => {
+    onSlidePatch({ themeOverride: { enabled: true, tokens: { ...pendingTokensRef.current, [key]: value } } });
+  };
+
+  // Debounced persist — color pickers fire onChange on every drag frame.
+  // Coalesces rapid updates into a single save 400 ms after the last change.
+  const setTokenDebounced = (key, value) => {
+    pendingTokensRef.current = { ...pendingTokensRef.current, [key]: value };
+    clearTimeout(patchTimerRef.current);
+    patchTimerRef.current = setTimeout(() => {
+      onSlidePatch({ themeOverride: { enabled: true, tokens: { ...pendingTokensRef.current } } });
+    }, 400);
+  };
+
+  return (
+    <div style={styles.configurationsContainer}>
+      <button onClick={() => setExpanded((p) => !p)} style={styles.configurationsToggle} type="button">
+        <span style={styles.configurationsChevron}>{expanded ? "▼" : "▶"}</span>
+        Slide Theme Override
+        {isEnabled && (
+          <span style={{ fontSize: "11px", fontWeight: "500", backgroundColor: "#dbeafe", color: "#1d4ed8", padding: "1px 7px", borderRadius: "9999px", marginLeft: "8px" }}>
+            Active
+          </span>
+        )}
+      </button>
+      {expanded && (
+        <div style={styles.configurationsBody}>
+          <p style={{ fontSize: "12px", color: "#6b7280", margin: "0 0 12px 0" }}>
+            Override the tutorial theme for this slide's playback shell. Leave a token blank to inherit from the tutorial theme.
+          </p>
+          <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: isPublished ? "not-allowed" : "pointer", marginBottom: "12px", fontSize: "13px", fontWeight: "500", color: "#374151" }}>
+            <input
+              type="checkbox"
+              checked={isEnabled}
+              disabled={isPublished}
+              onChange={(e) => handleToggleEnabled(e.target.checked)}
+            />
+            Enable override for this slide
+          </label>
+          {isEnabled && THEME_FIELD_DEFS.map(({ key, label, type, options }) => (
+            <div key={key}>
+              <label style={{ display: "block", fontSize: "12px", fontWeight: "500", color: "#374151", marginBottom: "4px" }}>{label}</label>
+              {type === "color" && (
+                <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "10px" }}>
+                  <input
+                    type="color"
+                    value={tokens[key] || THEME_TOKEN_DEFAULTS[key] || "#ffffff"}
+                    disabled={isPublished}
+                    onChange={(e) => setTokenDebounced(key, e.target.value)}
+                    style={{ width: "36px", height: "28px", border: "none", cursor: isPublished ? "not-allowed" : "pointer" }}
+                  />
+                  <input
+                    type="text"
+                    value={tokens[key] || ""}
+                    disabled={isPublished}
+                    onChange={(e) => setTokenDebounced(key, e.target.value)}
+                    placeholder={`inherit (${THEME_TOKEN_DEFAULTS[key]})`}
+                    maxLength={7}
+                    style={{ width: "150px", padding: "4px 8px", fontSize: "13px", border: "1px solid #d1d5db", borderRadius: "4px", boxSizing: "border-box" }}
+                  />
+                </div>
+              )}
+              {type === "select" && (
+                <select
+                  value={tokens[key] || ""}
+                  disabled={isPublished}
+                  onChange={(e) => setToken(key, e.target.value)}
+                  style={{ width: "100%", padding: "6px 8px", fontSize: "13px", border: "1px solid #d1d5db", borderRadius: "4px", backgroundColor: "#fff", marginBottom: "10px", boxSizing: "border-box" }}
+                >
+                  <option value="">— inherit from tutorial theme —</option>
+                  {options.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              )}
+              {type === "bool" && (
+                <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: isPublished ? "not-allowed" : "pointer", marginBottom: "10px", fontSize: "13px" }}>
+                  <input
+                    type="checkbox"
+                    checked={key in tokens ? !!tokens[key] : !!THEME_TOKEN_DEFAULTS[key]}
+                    disabled={isPublished}
+                    onChange={(e) => setToken(key, e.target.checked)}
+                  />
+                  {label}
+                </label>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function TutorialEditorPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -1054,6 +1178,11 @@ export default function TutorialEditorPage() {
   const [certTemplates, setCertTemplates]       = useState([]);
   const [certSaving, setCertSaving]             = useState(false);
   const [certSaveStatus, setCertSaveStatus]     = useState("");
+
+  // Theme settings state
+  const [themeSettings, setThemeSettings]       = useState({ theme_id: null });
+  const [availableThemes, setAvailableThemes]   = useState([]);
+  const [themeSaveStatus, setThemeSaveStatus]   = useState("");
 
   // Tutorial-wide settings modal
   const [showTutorialSettings, setShowTutorialSettings] = useState(false);
@@ -1080,15 +1209,19 @@ export default function TutorialEditorPage() {
     fetchTutorial();
   }, [id]);
 
-  // Load certificate settings and available templates alongside the tutorial
+  // Load certificate + theme settings and available templates alongside the tutorial
   useEffect(() => {
     if (!id) return;
     Promise.all([
       getTutorialCertSettings(id).catch(() => null),
       listTemplates().catch(() => []),
-    ]).then(([settings, templates]) => {
+      getTutorialThemeSettings(id).catch(() => null),
+      listTutorialThemes().catch(() => []),
+    ]).then(([settings, templates, themeSettingsData, themes]) => {
       if (settings) setCertSettings(settings);
       if (templates) setCertTemplates(templates);
+      if (themeSettingsData) setThemeSettings(themeSettingsData);
+      if (themes) setAvailableThemes(themes);
     });
   }, [id]);
 
@@ -1131,6 +1264,7 @@ export default function TutorialEditorPage() {
         isBranchSlide:       slideData.isBranchSlide       ?? false,
         branchParentSlideId: slideData.branchParentSlideId ?? null,
         branchConfig:        slideData.branchConfig        ?? null,
+        themeOverride:       slideData.themeOverride       ?? null,
       }],
     };
 
@@ -1385,27 +1519,45 @@ export default function TutorialEditorPage() {
     }
   };
 
-  // Save certificate settings and close the modal.
+  // Save certificate + theme settings and close the modal.
   // Keeps the modal open during the request so success/error is visible.
   const handleCloseTutorialSettings = async () => {
     setCertSaving(true);
     setCertSaveStatus("");
-    try {
-      const saved = await saveTutorialCertSettings(id, {
-        enabled:     certSettings.enabled,
-        templateId:  certSettings.template_id || 0,
-        issuerName:  certSettings.issuer_name || "",
-      });
-      setCertSettings(saved);
+    setThemeSaveStatus("");
+
+    // Save independently so a failure in one doesn't suppress the other's result.
+    const [certResult, themeResult] = await Promise.allSettled([
+      saveTutorialCertSettings(id, {
+        enabled:    certSettings.enabled,
+        templateId: certSettings.template_id || 0,
+        issuerName: certSettings.issuer_name || "",
+      }),
+      saveTutorialThemeSettings(id, { themeId: themeSettings.theme_id || null }),
+    ]);
+
+    if (certResult.status === "fulfilled") {
+      setCertSettings(certResult.value);
       setCertSaveStatus("Saved");
+    } else {
+      setCertSaveStatus("Error: " + certResult.reason?.message);
+    }
+
+    if (themeResult.status === "fulfilled") {
+      setThemeSaveStatus("Saved");
+    } else {
+      setThemeSaveStatus("Error: " + themeResult.reason?.message);
+    }
+
+    setCertSaving(false);
+
+    // Only close if both saved successfully.
+    if (certResult.status === "fulfilled" && themeResult.status === "fulfilled") {
       setTimeout(() => {
         setShowTutorialSettings(false);
         setCertSaveStatus("");
+        setThemeSaveStatus("");
       }, 600);
-    } catch (err) {
-      setCertSaveStatus("Error: " + err.message);
-    } finally {
-      setCertSaving(false);
     }
   };
 
@@ -2023,6 +2175,13 @@ export default function TutorialEditorPage() {
               onSlidePatch={(updates) => handleSlidePatch(activeSlide.slideId, updates)}
             />
 
+            {/* Per-slide theme override */}
+            <SlideThemeOverrideEditor
+              slide={activeSlide}
+              isPublished={isPublished}
+              onSlidePatch={(updates) => handleSlidePatch(activeSlide.slideId, updates)}
+            />
+
             {/* done Editing Button */}
             <div style={styles.doneButtonContainer}>
               <button
@@ -2133,6 +2292,31 @@ export default function TutorialEditorPage() {
               {certSaveStatus && (
                 <span style={{ fontSize: "13px", marginTop: "8px", display: "block", color: certSaveStatus.startsWith("Error") ? "#dc2626" : "#16a34a" }}>
                   {certSaveStatus}
+                </span>
+              )}
+            </div>
+
+            {/* Tutorial Theme Section */}
+            <div style={styles.modalSection}>
+              <h3 style={styles.modalSectionTitle}>Tutorial Theme</h3>
+              <div>
+                <label style={styles.certPanelFieldLabel}>Theme</label>
+                <select
+                  value={themeSettings.theme_id || ""}
+                  onChange={(e) => setThemeSettings((p) => ({ ...p, theme_id: e.target.value ? Number(e.target.value) : null }))}
+                  style={styles.certPanelSelect}
+                >
+                  <option value="">— Use default theme —</option>
+                  {availableThemes.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}{Number(t.is_default) === 1 ? " (default)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {themeSaveStatus && (
+                <span style={{ fontSize: "13px", marginTop: "8px", display: "block", color: themeSaveStatus.startsWith("Error") ? "#dc2626" : "#16a34a" }}>
+                  {themeSaveStatus}
                 </span>
               )}
             </div>

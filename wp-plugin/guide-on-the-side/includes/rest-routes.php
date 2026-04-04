@@ -1363,20 +1363,14 @@ function gots_rest_verify_certificate($request) {
     set_transient($rl_key, $rl_count + 1, HOUR_IN_SECONDS);
 
     $row = gots_lookup_certificate_by_verification_token($vid);
-    if (!$row) {
+    if (!$row || $row->status !== 'issued') {
         return rest_ensure_response(array('valid' => false));
-    }
-
-    $tutorial_title = get_the_title((int) $row->tutorial_id);
-    if ($tutorial_title === '') {
-        $tutorial_title = '';
     }
 
     return rest_ensure_response(array(
         'valid'          => true,
         'issued_at'      => $row->issued_at,
-        'tutorial_title' => $tutorial_title,
-        'status'         => $row->status,
+        'tutorial_title' => get_the_title((int) $row->tutorial_id),
     ));
 }
 

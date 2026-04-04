@@ -74,6 +74,10 @@ export default function StudentApp() {
   const [certLoading, setCertLoading]         = useState(false);
   const [certError, setCertError]             = useState(null);
   const [certDownloadUrl, setCertDownloadUrl] = useState(null);
+  // Stable idempotency key per completion attempt — shared across retries so the
+  // server can dedupe rapid double-clicks.  Reset when the recipient name changes
+  // because that constitutes a new logical issuance attempt.
+  const idempotencyKeyRef = useRef(null);
 
   const config = getConfig();
 
@@ -404,13 +408,22 @@ export default function StudentApp() {
           a.href = url;
           a.download = "certificate-preview.pdf";
           a.click();
-          URL.revokeObjectURL(url);
+          setTimeout(() => URL.revokeObjectURL(url), 10000);
           setCertDownloadUrl("preview");
         } else {
+          if (!idempotencyKeyRef.current) {
+            const uid = (typeof crypto !== 'undefined' && crypto.randomUUID)
+              ? crypto.randomUUID()
+              : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+                  const r = Math.random() * 16 | 0;
+                  return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+                });
+            idempotencyKeyRef.current = `${config.tutorialId}-${uid}`;
+          }
           const result = await issueCertificate(config.tutorialId, {
             recipientName:   recipientName.trim(),
             completionProof: completionProof || '',
-            idempotencyKey:  `${config.tutorialId}-${Date.now()}`,
+            idempotencyKey:  idempotencyKeyRef.current,
           });
           setCertDownloadUrl(result.downloadUrl);
         }
@@ -447,6 +460,7 @@ export default function StudentApp() {
                   setRecipientName(e.target.value);
                   setCertError(null);
                   setCertDownloadUrl(null);
+                  idempotencyKeyRef.current = null;
                 }}
                 placeholder="Enter your full name"
                 style={styles.certInput}
@@ -480,10 +494,10 @@ export default function StudentApp() {
             ) : (
               <button
                 onClick={handleGenerateCert}
-                disabled={certLoading}
-                style={certLoading ? { ...styles.certButton, opacity: 0.6 } : styles.certButton}
+                disabled={certLoading || (!config.isPreview && !completionProof)}
+                style={(certLoading || (!config.isPreview && !completionProof)) ? { ...styles.certButton, opacity: 0.6 } : styles.certButton}
               >
-                {certLoading ? "Generating…" : "Generate Certificate"}
+                {certLoading ? "Generating…" : !config.isPreview && !completionProof ? "Preparing…" : "Generate Certificate"}
               </button>
             )}
           </div>

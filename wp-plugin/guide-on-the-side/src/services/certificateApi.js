@@ -109,7 +109,8 @@ export async function downloadCertificate(downloadUrl, filename = 'certificate.p
   });
 
   if (!response.ok) {
-    throw new Error(`Download failed (${response.status})`);
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.message || `Download failed (${response.status})`);
   }
 
   const blob = await response.blob();
@@ -132,7 +133,10 @@ export async function downloadCertificate(downloadUrl, filename = 'certificate.p
  */
 export async function verifyCertificate(verificationId) {
   const config = getConfig();
-  const id = encodeURIComponent(String(verificationId).trim());
+  const id = encodeURIComponent(String(verificationId ?? '').trim());
+  if (!id) {
+    throw new Error('verificationId is required.');
+  }
   const url = `${config.baseUrl}/certificates/verify/${id}`;
   const response = await fetch(url, { credentials: 'same-origin' });
   if (!response.ok) {

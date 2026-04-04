@@ -1385,8 +1385,9 @@ export default function TutorialEditorPage() {
     }
   };
 
-  // Save certificate settings for this tutorial
-  const handleSaveCertSettings = async () => {
+  // Save certificate settings and close the modal.
+  // Keeps the modal open during the request so success/error is visible.
+  const handleCloseTutorialSettings = async () => {
     setCertSaving(true);
     setCertSaveStatus("");
     try {
@@ -1397,28 +1398,12 @@ export default function TutorialEditorPage() {
       });
       setCertSettings(saved);
       setCertSaveStatus("Saved");
-      setTimeout(() => setCertSaveStatus(""), 2500);
+      setTimeout(() => {
+        setShowTutorialSettings(false);
+        setCertSaveStatus("");
+      }, 600);
     } catch (err) {
       setCertSaveStatus("Error: " + err.message);
-    } finally {
-      setCertSaving(false);
-    }
-  };
-
-  // Close tutorial settings modal and auto-save cert settings
-  const handleCloseTutorialSettings = async () => {
-    setShowTutorialSettings(false);
-    // Auto-save certificate settings on close
-    setCertSaving(true);
-    try {
-      const saved = await saveTutorialCertSettings(id, {
-        enabled:     certSettings.enabled,
-        templateId:  certSettings.template_id || 0,
-        issuerName:  certSettings.issuer_name || "",
-      });
-      setCertSettings(saved);
-    } catch (err) {
-      console.error("Error auto-saving certificate settings:", err);
     } finally {
       setCertSaving(false);
     }
@@ -2088,11 +2073,11 @@ export default function TutorialEditorPage() {
 
       {/* Tutorial Settings Modal */}
       {showTutorialSettings && (
-        <div style={styles.modalOverlay} onClick={handleCloseTutorialSettings}>
+        <div style={styles.modalOverlay} onClick={certSaving ? undefined : handleCloseTutorialSettings}>
           <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
             <div style={styles.modalHeader}>
               <h2 style={styles.modalTitle}>Tutorial Settings</h2>
-              <button onClick={handleCloseTutorialSettings} style={styles.modalCloseButton} title="Close">✕</button>
+              <button onClick={certSaving ? undefined : handleCloseTutorialSettings} disabled={certSaving} style={styles.modalCloseButton} title="Close">✕</button>
             </div>
 
             {/* Certificate Settings Section */}
@@ -2153,8 +2138,14 @@ export default function TutorialEditorPage() {
             </div>
 
             <div style={styles.modalFooter}>
-              <span style={{ fontSize: "12px", color: "#9ca3af" }}>Settings are saved automatically when you close this panel.</span>
-              <button onClick={handleCloseTutorialSettings} style={styles.certSaveButton}>Done</button>
+              <span style={{ fontSize: "12px", color: "#9ca3af" }}>Settings are saved when you click Done.</span>
+              <button
+                onClick={handleCloseTutorialSettings}
+                disabled={certSaving}
+                style={certSaving ? { ...styles.certSaveButton, opacity: 0.6 } : styles.certSaveButton}
+              >
+                {certSaving ? "Saving…" : "Done"}
+              </button>
             </div>
           </div>
         </div>

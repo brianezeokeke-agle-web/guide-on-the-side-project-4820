@@ -210,7 +210,7 @@ function gots_validate_template_config($config) {
         switch ($key) {
             case 'accent_color':
                 // hex color only
-                if (!preg_match('/^#[0-9A-Fa-f]{3,6}$/', $value)) {
+                if (!preg_match('/^#(?:[0-9A-Fa-f]{3}){1,2}$/', $value)) {
                     return new WP_Error(
                         'validation_error',
                         'accent_color must be a valid hex color (e.g. #3b82f6)',
@@ -708,11 +708,15 @@ function gots_cert_custom_html_allowed_tags() {
 function gots_sanitize_custom_certificate_html_body($html) {
     $html = wp_kses($html, gots_cert_custom_html_allowed_tags());
 
+    // Only data URIs are supported: the PDF renderer runs with isRemoteEnabled=false,
+    // so https:// image src values would be silently ignored in the output PDF.
+    // Strip any <img> whose src is not a base64 data URI so authors see the
+    // failure immediately in the template preview rather than a blank space in the PDF.
     return preg_replace_callback(
         '/<img\s+[^>]*src\s*=\s*(["\'])([^"\']+)\1[^>]*>/i',
         function ($m) {
             $src = $m[2];
-            if (preg_match('#^(https?:|data:image/(png|jpeg|gif|jpg);base64,)#i', $src)) {
+            if (preg_match('#^data:image/(png|jpeg|gif|jpg);base64,#i', $src)) {
                 return $m[0];
             }
             return '';
@@ -801,7 +805,7 @@ function gots_render_certificate_html($template, $values) {
     );
     $cfg = array_merge($defaults, $config);
 
-    $accent = preg_match('/^#[0-9A-Fa-f]{3,6}$/', $cfg['accent_color'])
+    $accent = preg_match('/^#(?:[0-9A-Fa-f]{3}){1,2}$/', $cfg['accent_color'])
         ? $cfg['accent_color'] : '#1a2744';
 
     $font = in_array($cfg['font_family'], GOTS_CERT_FONTS, true)

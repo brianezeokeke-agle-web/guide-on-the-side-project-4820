@@ -73,8 +73,17 @@ function gots_maybe_create_certificates_table() {
         // existing KEY to a UNIQUE KEY automatically, so we drop it manually first.
         if (version_compare($installed, '1.1.0', '<') && version_compare($installed, '1.0.0', '>=')) {
             global $wpdb;
-            $table = $wpdb->prefix . 'gots_certificates';
-            $wpdb->query("ALTER TABLE $table DROP KEY IF EXISTS idx_student_tutorial");
+            $table      = $wpdb->prefix . 'gots_certificates';
+            $index_exists = $wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM information_schema.STATISTICS
+                 WHERE table_schema = DATABASE()
+                   AND table_name   = %s
+                   AND index_name   = 'idx_student_tutorial'",
+                $table
+            ));
+            if ($index_exists) {
+                $wpdb->query("ALTER TABLE $table DROP INDEX idx_student_tutorial");
+            }
         }
         gots_create_certificates_table();
     }
@@ -105,11 +114,19 @@ function gots_cert_base64url_encode($data) {
 /**
  * Decode a URL-safe base64 string.
  *
+ * Re-adds the `=` padding that gots_cert_base64url_encode() stripped, then
+ * decodes in strict mode so corrupted tokens return false instead of garbage.
+ *
  * @param string $data
  * @return string|false
  */
 function gots_cert_base64url_decode($data) {
-    return base64_decode(strtr($data, '-_', '+/'));
+    $data = strtr($data, '-_', '+/');
+    $pad  = strlen($data) % 4;
+    if ($pad) {
+        $data .= str_repeat('=', 4 - $pad);
+    }
+    return base64_decode($data, true);
 }
 
 // ─── Completion-proof helpers ─────────────────────────────────────────────────
@@ -404,15 +421,19 @@ function gots_get_student_identifier() {
         }
     }
 
-    // No valid cookie — generate a new UUID and set it for one year
+    // No valid cookie — generate a new UUID.  Only set it as a cookie if headers
+    // have not been sent yet; on REST API requests this is always the case, but
+    // guard defensively to avoid a PHP warning if something flushes output early.
     $new_id = wp_generate_uuid4();
-    setcookie($cookie_name, $new_id, array(
-        'expires'  => time() + YEAR_IN_SECONDS,
-        'path'     => '/',
-        'secure'   => is_ssl(),
-        'httponly' => true,
-        'samesite' => 'Lax',
-    ));
+    if (!headers_sent()) {
+        setcookie($cookie_name, $new_id, array(
+            'expires'  => time() + YEAR_IN_SECONDS,
+            'path'     => '/',
+            'secure'   => is_ssl(),
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ));
+    }
 
     return hash('sha256', $new_id . AUTH_SALT);
 }

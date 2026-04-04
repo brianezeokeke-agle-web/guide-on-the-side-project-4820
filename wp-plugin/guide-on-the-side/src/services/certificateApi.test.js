@@ -147,6 +147,7 @@ describe('certificateApi', () => {
     fetch.mockResolvedValueOnce({
       ok: false,
       status: 404,
+      json: async () => ({}),
     });
 
     await expect(downloadCertificate('https://example.com/missing')).rejects.toThrow('Download failed (404)');
@@ -165,6 +166,13 @@ describe('certificateApi', () => {
     expect(fetch.mock.calls[0][0]).toContain('/certificates/verify/');
     expect(fetch.mock.calls[0][0]).toContain(encodeURIComponent('abc-uuid-123'));
     expect(result.valid).toBe(true);
+  });
+
+  test('verifyCertificate throws immediately for empty verificationId', async () => {
+    await expect(verifyCertificate('')).rejects.toThrow('verificationId is required.');
+    await expect(verifyCertificate('   ')).rejects.toThrow('verificationId is required.');
+    await expect(verifyCertificate(null)).rejects.toThrow('verificationId is required.');
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   test('verifyCertificate throws on rate-limit response', async () => {

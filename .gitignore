@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+wp-plugin/guide-on-the-side/vendor/
 
 # Build outputs
 dist/

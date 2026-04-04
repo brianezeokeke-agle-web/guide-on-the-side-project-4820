@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { recordAnalyticsEvent } from "./services/analyticsApi";
+import { issueCertificate, downloadCertificate, requestCompletionProof } from "./services/certificateApi";
 import { isTextAnswerCorrect } from "./services/slideValidation";
 import {
   buildSlidesById,
@@ -22,6 +23,7 @@ function getConfig() {
     restUrl: "/wp-json/gots/v1",
     homeUrl: "/",
     siteName: "Site",
+    userName: "Guest",
   };
 }
 
@@ -65,6 +67,17 @@ export default function StudentApp() {
   const [answers, setAnswers] = useState({});
   const [feedback, setFeedback] = useState({});
   const [completed, setCompleted] = useState(false);
+
+  // Certificate state
+  const [recipientName, setRecipientName]     = useState("");
+  const [completionProof, setCompletionProof] = useState(null);
+  const [certLoading, setCertLoading]         = useState(false);
+  const [certError, setCertError]             = useState(null);
+  const [certDownloadUrl, setCertDownloadUrl] = useState(null);
+  // Stable idempotency key per completion attempt — shared across retries so the
+  // server can dedupe rapid double-clicks.  Reset when the recipient name changes
+  // because that constitutes a new logical issuance attempt.
+  const idempotencyKeyRef = useRef(null);
 
   const config = getConfig();
 
@@ -141,6 +154,14 @@ export default function StudentApp() {
 
     loadTutorial();
   }, [config.tutorialId]);
+
+  // Prefill recipient name from WP user display name (logged-in users only)
+  useEffect(() => {
+    if (config.currentUserName && !recipientName) {
+      setRecipientName(config.currentUserName);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.currentUserName]);
 
   //navigation state
   const isFirstSlide = historyStack.length === 0;
@@ -318,6 +339,13 @@ export default function StudentApp() {
         recordAnalyticsEvent(config.tutorialId, 'tutorial_completed');
         hasStarted.current          = false;
         lastViewedSlideId.current   = null;
+        // Request a fresh completion proof now that the student has genuinely
+        // finished.  Store it in state so issueCertificate can use it.
+        if (config.certificateEnabled) {
+          requestCompletionProof(config.tutorialId)
+            .then((proof) => setCompletionProof(proof))
+            .catch(() => { /* non-fatal — user will see an error when they click Generate */ });
+        }
       }
       setCompleted(true);
       return;
@@ -349,12 +377,132 @@ export default function StudentApp() {
   }
 
   if (completed) {
+    const certEnabled = config.certificateEnabled;
+
+    const handleGenerateCert = async () => {
+      if (!recipientName.trim()) {
+        setCertError("Please enter your name before generating a certificate.");
+        return;
+      }
+      setCertLoading(true);
+      setCertError(null);
+      try {
+        if (config.isPreview) {
+          // Preview mode: render a real PDF with PREVIEW-0000 ID, no DB write.
+          const previewUrl = `${config.restUrl}/tutorials/${config.tutorialId}/certificate/preview`;
+          const headers = { "Content-Type": "application/json" };
+          if (config.nonce) headers["X-WP-Nonce"] = config.nonce;
+          const resp = await fetch(previewUrl, {
+            method: "POST",
+            headers,
+            credentials: "same-origin",
+            body: JSON.stringify({ recipientName: recipientName.trim() }),
+          });
+          if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.message || "Preview generation failed");
+          }
+          const blob = await resp.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "certificate-preview.pdf";
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(url), 10000);
+          setCertDownloadUrl("preview");
+        } else {
+          if (!idempotencyKeyRef.current) {
+            const uid = (typeof crypto !== 'undefined' && crypto.randomUUID)
+              ? crypto.randomUUID()
+              : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+                  const r = Math.random() * 16 | 0;
+                  return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+                });
+            idempotencyKeyRef.current = `${config.tutorialId}-${uid}`;
+          }
+          const result = await issueCertificate(config.tutorialId, {
+            recipientName:   recipientName.trim(),
+            completionProof: completionProof || '',
+            idempotencyKey:  idempotencyKeyRef.current,
+          });
+          setCertDownloadUrl(result.downloadUrl);
+        }
+      } catch (err) {
+        const msg = err.message || '';
+        const displayMsg = msg.toLowerCase().includes('expired')
+          ? 'Your session has expired. Please reload the page to generate your certificate.'
+          : msg || 'Could not generate certificate. Please try again.';
+        setCertError(displayMsg);
+      } finally {
+        setCertLoading(false);
+      }
+    };
+
     return (
       <div style={styles.completionContainer}>
         <h1 style={styles.completionTitle}>Tutorial Complete!</h1>
         <p style={styles.completionMessage}>
           Good Job! You&apos;ve completed {tutorial.title}.
         </p>
+
+        {certEnabled && (
+          <div style={styles.certSection}>
+            <p style={styles.certHeading}>Download your certificate of completion</p>
+            <div style={styles.certNameRow}>
+              <label style={styles.certLabel} htmlFor="cert-recipient-name">
+                Your name on the certificate:
+              </label>
+              <input
+                id="cert-recipient-name"
+                type="text"
+                value={recipientName}
+                onChange={(e) => {
+                  setRecipientName(e.target.value);
+                  setCertError(null);
+                  setCertDownloadUrl(null);
+                  idempotencyKeyRef.current = null;
+                }}
+                placeholder="Enter your full name"
+                style={styles.certInput}
+                maxLength={191}
+                disabled={certLoading}
+              />
+            </div>
+
+            {certError && (
+              <p style={styles.certError}>{certError}</p>
+            )}
+
+            {certDownloadUrl ? (
+              <button
+                onClick={async () => {
+                  try {
+                    if (certDownloadUrl === "preview") {
+                      // Re-trigger the preview PDF download
+                      await handleGenerateCert();
+                    } else {
+                      await downloadCertificate(certDownloadUrl, `certificate-${config.tutorialId}.pdf`);
+                    }
+                  } catch (err) {
+                    setCertError(err.message || 'Download failed. Please try again.');
+                  }
+                }}
+                style={styles.certDownloadButton}
+              >
+                Download Certificate
+              </button>
+            ) : (
+              <button
+                onClick={handleGenerateCert}
+                disabled={certLoading || (!config.isPreview && !completionProof)}
+                style={(certLoading || (!config.isPreview && !completionProof)) ? { ...styles.certButton, opacity: 0.6 } : styles.certButton}
+              >
+                {certLoading ? "Generating…" : !config.isPreview && !completionProof ? "Preparing…" : "Generate Certificate"}
+              </button>
+            )}
+          </div>
+        )}
+
         <div style={styles.completionActions}>
           <button
             onClick={() => {
@@ -363,12 +511,16 @@ export default function StudentApp() {
               setCurrentSlideId(getFirstSlideId(allSlides));
               setAnswers({});
               setFeedback({});
+              setCertDownloadUrl(null);
+              setCertError(null);
             }}
             style={styles.restartButton}
           >
             Restart Tutorial
           </button>
-          <a href={config.homeUrl} style={styles.homeLink}>Return to Home</a>
+          <a href={config.homeUrl} style={styles.homeLink}>
+            Return to Home
+          </a>
         </div>
       </div>
     );
@@ -692,6 +844,68 @@ const styles = {
     gap: "16px",
     flexWrap: "wrap",
     justifyContent: "center",
+  },
+  certSection: {
+    backgroundColor: "white",
+    border: "1px solid #e5e7eb",
+    borderRadius: "12px",
+    padding: "24px",
+    marginBottom: "24px",
+    width: "100%",
+    maxWidth: "480px",
+    textAlign: "left",
+  },
+  certHeading: {
+    fontSize: "16px",
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: "16px",
+  },
+  certNameRow: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+    marginBottom: "12px",
+  },
+  certLabel: {
+    fontSize: "14px",
+    color: "#374151",
+    fontWeight: "500",
+  },
+  certInput: {
+    padding: "8px 12px",
+    fontSize: "15px",
+    border: "1px solid #d1d5db",
+    borderRadius: "6px",
+    outline: "none",
+    width: "100%",
+  },
+  certError: {
+    fontSize: "14px",
+    color: "#dc2626",
+    marginBottom: "12px",
+  },
+  certButton: {
+    padding: "10px 20px",
+    fontSize: "15px",
+    fontWeight: "600",
+    backgroundColor: "#2563eb",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    cursor: "pointer",
+    width: "100%",
+  },
+  certDownloadButton: {
+    padding: "10px 20px",
+    fontSize: "15px",
+    fontWeight: "600",
+    backgroundColor: "#16a34a",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    cursor: "pointer",
+    width: "100%",
   },
   restartButton: {
     padding: "12px 24px",

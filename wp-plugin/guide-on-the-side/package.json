@@ -7,8 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "npm run build:admin && npm run build:student",
-    "build:admin": "VITE_BUILD_MODE=admin vite build",
-    "build:student": "VITE_BUILD_MODE=student vite build",
+    "build:admin": "cross-env VITE_BUILD_MODE=admin vite build",
+    "build:student": "cross-env VITE_BUILD_MODE=student vite build",
     "preview": "vite preview",
     "lint": "eslint src/",
     "test": "jest"
@@ -21,6 +21,7 @@
     "recharts": "^3.8.0"
   },
   "devDependencies": {
+    "cross-env": "^7.0.3",
     "@babel/core": "^7.29.0",
     "@babel/preset-env": "^7.29.0",
     "@babel/preset-react": "^7.28.5",

@@ -4,6 +4,11 @@ import DOMPurify from "dompurify";
 import { getTutorial, updateTutorial } from "../services/tutorialApi";
 import { selectMedia, isMediaLibraryAvailable } from "../services/mediaLibrary";
 import {
+  getTutorialCertSettings,
+  saveTutorialCertSettings,
+  listTemplates,
+} from "../services/certificateTemplateApi";
+import {
   buildBranchChildrenMap,
   buildRegularSlideOrder,
   buildSlidesById,
@@ -909,7 +914,7 @@ function BranchConfigEditor({ slide, allSlides, isPublished, onSlidePatch, onBlu
         aria-expanded={expanded}
       >
         <span style={styles.configurationsChevron}>{expanded ? '▼' : '▶'}</span>
-        Configurations
+        Slide Configurations
       </button>
 
       {expanded && (
@@ -1044,6 +1049,15 @@ export default function TutorialEditorPage() {
   const [editingTitleValue, setEditingTitleValue] = useState("");
   const titleInputRef = useRef(null);
 
+  // Certificate settings state
+  const [certSettings, setCertSettings]         = useState({ enabled: false, template_id: null, issuer_name: "" });
+  const [certTemplates, setCertTemplates]       = useState([]);
+  const [certSaving, setCertSaving]             = useState(false);
+  const [certSaveStatus, setCertSaveStatus]     = useState("");
+
+  // Tutorial-wide settings modal
+  const [showTutorialSettings, setShowTutorialSettings] = useState(false);
+
   // fetch tutorial on mount
   useEffect(() => {
     const fetchTutorial = async () => {
@@ -1064,6 +1078,18 @@ export default function TutorialEditorPage() {
       }
     };
     fetchTutorial();
+  }, [id]);
+
+  // Load certificate settings and available templates alongside the tutorial
+  useEffect(() => {
+    if (!id) return;
+    Promise.all([
+      getTutorialCertSettings(id).catch(() => null),
+      listTemplates().catch(() => []),
+    ]).then(([settings, templates]) => {
+      if (settings) setCertSettings(settings);
+      if (templates) setCertTemplates(templates);
+    });
   }, [id]);
 
   // get the active slide object
@@ -1356,6 +1382,30 @@ export default function TutorialEditorPage() {
       setTimeout(() => setSaveStatus(""), 2000);
     } catch (err) {
       setSaveStatus("Error saving");
+    }
+  };
+
+  // Save certificate settings and close the modal.
+  // Keeps the modal open during the request so success/error is visible.
+  const handleCloseTutorialSettings = async () => {
+    setCertSaving(true);
+    setCertSaveStatus("");
+    try {
+      const saved = await saveTutorialCertSettings(id, {
+        enabled:     certSettings.enabled,
+        templateId:  certSettings.template_id || 0,
+        issuerName:  certSettings.issuer_name || "",
+      });
+      setCertSettings(saved);
+      setCertSaveStatus("Saved");
+      setTimeout(() => {
+        setShowTutorialSettings(false);
+        setCertSaveStatus("");
+      }, 600);
+    } catch (err) {
+      setCertSaveStatus("Error: " + err.message);
+    } finally {
+      setCertSaving(false);
     }
   };
 
@@ -1881,6 +1931,14 @@ export default function TutorialEditorPage() {
           </div>
           <div style={styles.headerRight}>
             {saveStatus && <span style={styles.saveStatus}>{saveStatus}</span>}
+            {/* Tutorial-wide settings button */}
+            <button
+              onClick={() => setShowTutorialSettings(true)}
+              style={styles.settingsIconButton}
+              title="Tutorial Settings"
+            >
+              ⚙
+            </button>
             {/* Preview button — opens the student playback in a new tab */}
             <button
               onClick={() => {
@@ -2010,7 +2068,88 @@ export default function TutorialEditorPage() {
         ) : (
           <p>Select a slide from the sidebar to edit.</p>
         )}
+
       </main>
+
+      {/* Tutorial Settings Modal */}
+      {showTutorialSettings && (
+        <div style={styles.modalOverlay} onClick={certSaving ? undefined : handleCloseTutorialSettings}>
+          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>Tutorial Settings</h2>
+              <button onClick={certSaving ? undefined : handleCloseTutorialSettings} disabled={certSaving} style={styles.modalCloseButton} title="Close">✕</button>
+            </div>
+
+            {/* Certificate Settings Section */}
+            <div style={styles.modalSection}>
+              <h3 style={styles.modalSectionTitle}>Certificate Settings</h3>
+
+              <label style={styles.certPanelLabel}>
+                <input
+                  type="checkbox"
+                  checked={!!certSettings.enabled}
+                  onChange={(e) => setCertSettings((p) => ({ ...p, enabled: e.target.checked }))}
+                  style={{ marginRight: "6px" }}
+                />
+                Enable completion certificate for this tutorial
+              </label>
+
+              {certSettings.enabled && (
+                <>
+                  <div style={{ marginTop: "12px" }}>
+                    <label style={styles.certPanelFieldLabel}>Certificate Template</label>
+                    {certSettings.template_id &&
+                      !certTemplates.some((t) => t.id === certSettings.template_id) && (
+                        <p style={{ fontSize: "12px", color: "#b45309", marginBottom: "4px" }}>
+                          The previously selected template has been deleted. The default template will be used until you select another.
+                        </p>
+                    )}
+                    <select
+                      value={certSettings.template_id || ""}
+                      onChange={(e) => setCertSettings((p) => ({ ...p, template_id: e.target.value ? Number(e.target.value) : null }))}
+                      style={styles.certPanelSelect}
+                    >
+                      <option value="">— Use default template —</option>
+                      {certTemplates.map((t) => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div style={{ marginTop: "12px" }}>
+                    <label style={styles.certPanelFieldLabel}>Issuer Name Override</label>
+                    <input
+                      type="text"
+                      value={certSettings.issuer_name || ""}
+                      onChange={(e) => setCertSettings((p) => ({ ...p, issuer_name: e.target.value }))}
+                      placeholder="Leave blank to use site name"
+                      style={styles.certPanelInput}
+                      maxLength={191}
+                    />
+                  </div>
+                </>
+              )}
+
+              {certSaveStatus && (
+                <span style={{ fontSize: "13px", marginTop: "8px", display: "block", color: certSaveStatus.startsWith("Error") ? "#dc2626" : "#16a34a" }}>
+                  {certSaveStatus}
+                </span>
+              )}
+            </div>
+
+            <div style={styles.modalFooter}>
+              <span style={{ fontSize: "12px", color: "#9ca3af" }}>Settings are saved when you click Done.</span>
+              <button
+                onClick={handleCloseTutorialSettings}
+                disabled={certSaving}
+                style={certSaving ? { ...styles.certSaveButton, opacity: 0.6 } : styles.certSaveButton}
+              >
+                {certSaving ? "Saving…" : "Done"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2820,5 +2959,122 @@ const styles = {
     backgroundColor: "#f3f4f6",
     color: "#6b7280",
     cursor: "default",
+  },
+  // Tutorial settings icon button (gear)
+  settingsIconButton: {
+    width: "36px",
+    height: "36px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "20px",
+    background: "none",
+    border: "1px solid #d1d5db",
+    borderRadius: "8px",
+    cursor: "pointer",
+    color: "#374151",
+    transition: "background-color 0.15s",
+  },
+  // Tutorial settings modal
+  modalOverlay: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 9999,
+  },
+  modalContent: {
+    backgroundColor: "white",
+    borderRadius: "12px",
+    width: "480px",
+    maxWidth: "90vw",
+    maxHeight: "80vh",
+    overflow: "auto",
+    boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+  },
+  modalHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "20px 24px 0",
+  },
+  modalTitle: {
+    margin: 0,
+    fontSize: "18px",
+    fontWeight: "600",
+    color: "#111827",
+  },
+  modalCloseButton: {
+    background: "none",
+    border: "none",
+    fontSize: "18px",
+    cursor: "pointer",
+    color: "#6b7280",
+    padding: "4px 8px",
+    borderRadius: "4px",
+  },
+  modalSection: {
+    padding: "20px 24px",
+  },
+  modalSectionTitle: {
+    fontSize: "15px",
+    fontWeight: "600",
+    color: "#374151",
+    marginTop: 0,
+    marginBottom: "14px",
+  },
+  modalFooter: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "16px 24px",
+    borderTop: "1px solid #e5e7eb",
+  },
+  certPanelLabel: {
+    display: "flex",
+    alignItems: "center",
+    fontSize: "14px",
+    color: "#374151",
+    cursor: "pointer",
+  },
+  certPanelFieldLabel: {
+    display: "block",
+    fontSize: "13px",
+    fontWeight: "500",
+    color: "#374151",
+    marginBottom: "4px",
+  },
+  certPanelSelect: {
+    width: "100%",
+    padding: "7px 10px",
+    fontSize: "14px",
+    border: "1px solid #d1d5db",
+    borderRadius: "6px",
+    backgroundColor: "white",
+    boxSizing: "border-box",
+  },
+  certPanelInput: {
+    width: "100%",
+    padding: "7px 10px",
+    fontSize: "14px",
+    border: "1px solid #d1d5db",
+    borderRadius: "6px",
+    boxSizing: "border-box",
+    outline: "none",
+  },
+  certSaveButton: {
+    padding: "8px 16px",
+    fontSize: "13px",
+    fontWeight: "600",
+    backgroundColor: "#7B2D26",
+    color: "white",
+    border: "none",
+    borderRadius: "6px",
+    cursor: "pointer",
   },
 };

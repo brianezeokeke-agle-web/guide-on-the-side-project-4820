@@ -19,13 +19,13 @@ if (!defined('ABSPATH')) {
 
 // ─── DB version ──────────────────────────────────────────────────────────────
 
-define('GOTS_CERT_DB_VERSION', '1.0.0');
+define('GOTS_CERT_DB_VERSION', '1.1.0');
 
 /** Download token TTL in seconds (24 hours). */
 define('GOTS_CERT_DOWNLOAD_TTL', DAY_IN_SECONDS);
 
-/** Completion proof TTL in seconds (15 minutes). */
-define('GOTS_CERT_PROOF_TTL', 15 * MINUTE_IN_SECONDS);
+/** Completion proof TTL in seconds (60 minutes). */
+define('GOTS_CERT_PROOF_TTL', 60 * MINUTE_IN_SECONDS);
 
 /**
  * Create or upgrade the gots_certificates table.
@@ -52,7 +52,7 @@ function gots_create_certificates_table() {
         PRIMARY KEY  (id),
         UNIQUE KEY uq_verification_token (verification_token),
         KEY idx_tutorial_issued (tutorial_id, issued_at),
-        KEY idx_student_tutorial (student_identifier_hash, tutorial_id)
+        UNIQUE KEY uq_student_tutorial (student_identifier_hash, tutorial_id)
     ) $charset_collate;";
 
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -67,6 +67,15 @@ function gots_create_certificates_table() {
 function gots_maybe_create_certificates_table() {
     $installed = get_option('gots_cert_db_version', '0');
     if (version_compare($installed, GOTS_CERT_DB_VERSION, '<')) {
+        // 1.0.0 → 1.1.0: promote the non-unique student+tutorial index to a UNIQUE KEY
+        // so the DB itself enforces one certificate per student per tutorial and
+        // prevents race-condition duplicate inserts.  dbDelta will not convert an
+        // existing KEY to a UNIQUE KEY automatically, so we drop it manually first.
+        if (version_compare($installed, '1.1.0', '<') && version_compare($installed, '1.0.0', '>=')) {
+            global $wpdb;
+            $table = $wpdb->prefix . 'gots_certificates';
+            $wpdb->query("ALTER TABLE $table DROP KEY IF EXISTS idx_student_tutorial");
+        }
         gots_create_certificates_table();
     }
 }
@@ -373,7 +382,10 @@ function gots_check_idempotency_key($idempotency_key) {
  * Build a hashed, anonymous student identifier for the current request.
  *
  * For logged-in users: hash of user ID + salt.
- * For anonymous users: hash of IP + user-agent + salt.
+ * For anonymous users: persistent first-party cookie (gots_student_id) so
+ * the same person on the same browser always gets the same identity regardless
+ * of IP changes or user-agent variations.  If no valid cookie exists one is
+ * set for one year.
  *
  * @return string  Hex-encoded 64-char hash.
  */
@@ -382,9 +394,27 @@ function gots_get_student_identifier() {
         return hash('sha256', (string) get_current_user_id() . AUTH_SALT);
     }
 
-    $ip = gots_get_client_ip();
-    $ua = isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '';
-    return hash('sha256', $ip . $ua . AUTH_SALT);
+    $cookie_name = 'gots_student_id';
+
+    // Validate an existing cookie — must look like a v4 UUID
+    if (!empty($_COOKIE[$cookie_name])) {
+        $val = sanitize_text_field($_COOKIE[$cookie_name]);
+        if (preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $val)) {
+            return hash('sha256', $val . AUTH_SALT);
+        }
+    }
+
+    // No valid cookie — generate a new UUID and set it for one year
+    $new_id = wp_generate_uuid4();
+    setcookie($cookie_name, $new_id, array(
+        'expires'  => time() + YEAR_IN_SECONDS,
+        'path'     => '/',
+        'secure'   => is_ssl(),
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ));
+
+    return hash('sha256', $new_id . AUTH_SALT);
 }
 
 /**
@@ -543,8 +573,27 @@ function gots_issue_certificate($tutorial_id, $recipient_name, $completion_proof
     );
 
     if (!$inserted) {
-        // Clean up the rendered file
         @unlink($upload['path']);
+        // If a concurrent request raced us to the insert (duplicate student+tutorial), return
+        // the certificate that was just created rather than surfacing a DB error.
+        if (strpos($wpdb->last_error, 'Duplicate entry') !== false) {
+            $race_existing = $wpdb->get_row($wpdb->prepare(
+                "SELECT id, verification_token FROM $table
+                 WHERE tutorial_id = %d AND student_identifier_hash = %s
+                 ORDER BY issued_at DESC LIMIT 1",
+                $tutorial_id,
+                $student_id
+            ), OBJECT);
+            if ($race_existing) {
+                $dl       = gots_generate_download_token($race_existing->id);
+                $rest_url = rest_url('gots/v1/certificates/' . urlencode($dl['token']) . '/download');
+                return array(
+                    'certificateId' => (int) $race_existing->id,
+                    'downloadUrl'   => $rest_url,
+                    'expiresAt'     => $dl['expires_at'],
+                );
+            }
+        }
         error_log('[GOTS Cert] DB insert failed: ' . $wpdb->last_error);
         return new WP_Error('db_error', 'Could not save certificate record.', array('status' => 500));
     }
@@ -638,6 +687,32 @@ function gots_lookup_certificate_by_verification_token($token) {
 
     return $row ?: null;
 }
+
+// ─── Orphan cleanup ───────────────────────────────────────────────────────────
+
+/**
+ * Mark all certificates for a deleted tutorial as 'revoked' so they can no
+ * longer be downloaded or verified.  Fired on the WordPress delete_post action.
+ *
+ * @param int $post_id
+ * @return void
+ */
+function gots_cleanup_tutorial_certificates($post_id) {
+    if (get_post_type($post_id) !== 'gots_tutorial') {
+        return;
+    }
+
+    global $wpdb;
+    $table = $wpdb->prefix . 'gots_certificates';
+    $wpdb->update(
+        $table,
+        array('status' => 'revoked'),
+        array('tutorial_id' => absint($post_id)),
+        array('%s'),
+        array('%d')
+    );
+}
+add_action('delete_post', 'gots_cleanup_tutorial_certificates');
 
 // ─── Admin query helpers ──────────────────────────────────────────────────────
 

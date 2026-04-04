@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { recordAnalyticsEvent } from "./services/analyticsApi";
-import { issueCertificate, downloadCertificate } from "./services/certificateApi";
+import { issueCertificate, downloadCertificate, requestCompletionProof } from "./services/certificateApi";
 import { isTextAnswerCorrect } from "./services/slideValidation";
 import {
   buildSlidesById,
@@ -67,13 +67,12 @@ export default function StudentApp() {
   const [answers, setAnswers] = useState({});
   const [feedback, setFeedback] = useState({});
   const [completed, setCompleted] = useState(false);
-  const [certificateLoading, setCertificateLoading] = useState(false);
-  const [certificateError, setCertificateError] = useState(null);
 
   // Certificate state
-  const [recipientName, setRecipientName]   = useState("");
-  const [certLoading, setCertLoading]       = useState(false);
-  const [certError, setCertError]           = useState(null);
+  const [recipientName, setRecipientName]     = useState("");
+  const [completionProof, setCompletionProof] = useState(null);
+  const [certLoading, setCertLoading]         = useState(false);
+  const [certError, setCertError]             = useState(null);
   const [certDownloadUrl, setCertDownloadUrl] = useState(null);
 
   const config = getConfig();
@@ -235,55 +234,6 @@ export default function StudentApp() {
     }));
   };
 
-  // Generate certificate: call REST API, receive PDF blob, trigger download
-  const generateCertificate = async () => {
-    if (!tutorial?.title) return;
-    setCertificateError(null);
-    setCertificateLoading(true);
-    const userName = config.userName || "Guest";
-    const courseName = tutorial.title;
-    const completionDate = new Date().toLocaleDateString(undefined, {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-    const url = `${config.restUrl}/generate-certificate`;
-    const headers = {
-      "Content-Type": "application/json",
-    };
-    if (config.nonce) {
-      headers["X-WP-Nonce"] = config.nonce;
-    }
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          userName,
-          courseName,
-          completionDate,
-        }),
-      });
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.message || "Failed to generate certificate");
-      }
-      const blob = await response.blob();
-      const slug = courseName.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "course";
-      const datePart = new Date().toISOString().slice(0, 10);
-      const filename = `certificate-${slug}-${datePart}.pdf`;
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = filename;
-      link.click();
-      URL.revokeObjectURL(link.href);
-    } catch (err) {
-      setCertificateError(err.message || "Could not generate certificate.");
-    } finally {
-      setCertificateLoading(false);
-    }
-  };
-
   // previous (history-based) 
   const handlePrevious = () => {
     if (historyStack.length === 0) return;
@@ -385,6 +335,13 @@ export default function StudentApp() {
         recordAnalyticsEvent(config.tutorialId, 'tutorial_completed');
         hasStarted.current          = false;
         lastViewedSlideId.current   = null;
+        // Request a fresh completion proof now that the student has genuinely
+        // finished.  Store it in state so issueCertificate can use it.
+        if (config.certificateEnabled) {
+          requestCompletionProof(config.tutorialId)
+            .then((proof) => setCompletionProof(proof))
+            .catch(() => { /* non-fatal — user will see an error when they click Generate */ });
+        }
       }
       setCompleted(true);
       return;
@@ -426,13 +383,43 @@ export default function StudentApp() {
       setCertLoading(true);
       setCertError(null);
       try {
-        const result = await issueCertificate(config.tutorialId, {
-          recipientName: recipientName.trim(),
-          idempotencyKey: `${config.tutorialId}-${Date.now()}`,
-        });
-        setCertDownloadUrl(result.downloadUrl);
+        if (config.isPreview) {
+          // Preview mode: render a real PDF with PREVIEW-0000 ID, no DB write.
+          const previewUrl = `${config.restUrl}/tutorials/${config.tutorialId}/certificate/preview`;
+          const headers = { "Content-Type": "application/json" };
+          if (config.nonce) headers["X-WP-Nonce"] = config.nonce;
+          const resp = await fetch(previewUrl, {
+            method: "POST",
+            headers,
+            credentials: "same-origin",
+            body: JSON.stringify({ recipientName: recipientName.trim() }),
+          });
+          if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.message || "Preview generation failed");
+          }
+          const blob = await resp.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "certificate-preview.pdf";
+          a.click();
+          URL.revokeObjectURL(url);
+          setCertDownloadUrl("preview");
+        } else {
+          const result = await issueCertificate(config.tutorialId, {
+            recipientName:   recipientName.trim(),
+            completionProof: completionProof || '',
+            idempotencyKey:  `${config.tutorialId}-${Date.now()}`,
+          });
+          setCertDownloadUrl(result.downloadUrl);
+        }
       } catch (err) {
-        setCertError(err.message || "Could not generate certificate. Please try again.");
+        const msg = err.message || '';
+        const displayMsg = msg.toLowerCase().includes('expired')
+          ? 'Your session has expired. Please reload the page to generate your certificate.'
+          : msg || 'Could not generate certificate. Please try again.';
+        setCertError(displayMsg);
       } finally {
         setCertLoading(false);
       }
@@ -474,7 +461,18 @@ export default function StudentApp() {
 
             {certDownloadUrl ? (
               <button
-                onClick={() => downloadCertificate(certDownloadUrl, `certificate-${config.tutorialId}.pdf`)}
+                onClick={async () => {
+                  try {
+                    if (certDownloadUrl === "preview") {
+                      // Re-trigger the preview PDF download
+                      await handleGenerateCert();
+                    } else {
+                      await downloadCertificate(certDownloadUrl, `certificate-${config.tutorialId}.pdf`);
+                    }
+                  } catch (err) {
+                    setCertError(err.message || 'Download failed. Please try again.');
+                  }
+                }}
                 style={styles.certDownloadButton}
               >
                 Download Certificate
@@ -506,16 +504,6 @@ export default function StudentApp() {
           >
             Restart Tutorial
           </button>
-          <button
-            onClick={generateCertificate}
-            style={styles.certificateButton}
-            disabled={certificateLoading}
-          >
-            {certificateLoading ? "Generating..." : "Certificate of Completion"}
-          </button>
-          {certificateError && (
-            <p style={styles.certificateError}>{certificateError}</p>
-          )}
           <a href={config.homeUrl} style={styles.homeLink}>
             Return to Home
           </a>
@@ -914,23 +902,6 @@ const styles = {
     border: "none",
     borderRadius: "8px",
     cursor: "pointer",
-  },
-  certificateButton: {
-    padding: "12px 24px",
-    fontSize: "16px",
-    fontWeight: "600",
-    backgroundColor: "white",
-    color: "#374151",
-    border: "1px solid #d1d5db",
-    borderRadius: "8px",
-    cursor: "pointer",
-  },
-  certificateError: {
-    width: "100%",
-    marginTop: "8px",
-    marginBottom: "0",
-    fontSize: "14px",
-    color: "#b91c1c",
   },
   homeLink: {
     padding: "12px 24px",

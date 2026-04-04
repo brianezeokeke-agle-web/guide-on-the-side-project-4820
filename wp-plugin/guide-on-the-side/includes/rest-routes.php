@@ -103,11 +103,11 @@ function gots_register_rest_routes() {
 
     // ── Certificate endpoints ──────────────────────────────────────────────────
 
-    // POST /generate-certificate - generate and return a PDF certificate (legacy)
+    // POST /generate-certificate - generate and return a PDF certificate (legacy, admin-only)
     register_rest_route($namespace, '/generate-certificate', array(
         'methods'             => WP_REST_Server::CREATABLE,
         'callback'            => 'gots_rest_generate_certificate',
-        'permission_callback' => 'gots_rest_permissions_check_public',
+        'permission_callback' => 'gots_rest_permissions_check_write',
         'args'                => array(
             'userName'        => array(
                 'required'          => true,
@@ -210,11 +210,31 @@ function gots_register_rest_routes() {
         ),
     ));
 
+    // POST /tutorials/{id}/certificate/completion-proof  — request a fresh signed proof after actually completing
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/certificate/completion-proof', array(
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'gots_rest_request_completion_proof',
+        'permission_callback' => 'gots_rest_permissions_check_public',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
     // POST /tutorials/{id}/certificate/issue  — student issues a certificate after completion
     register_rest_route($namespace, '/tutorials/(?P<id>\d+)/certificate/issue', array(
         'methods'             => WP_REST_Server::CREATABLE,
         'callback'            => 'gots_rest_issue_certificate',
         'permission_callback' => 'gots_rest_permissions_check_public',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // POST /tutorials/{id}/certificate/preview  — render a preview PDF (no DB write)
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/certificate/preview', array(
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'gots_rest_preview_tutorial_certificate',
+        'permission_callback' => 'gots_rest_permissions_check_write',
         'args'                => array(
             'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
         ),
@@ -872,6 +892,14 @@ function gots_rest_duplicate_tutorial($request) {
     // set archived flag to false by default for the copy
     update_post_meta($new_post_id, '_gots_archived', 0);
 
+    // copy certificate settings (enabled, template, issuer name)
+    $cert_enabled     = get_post_meta($id, '_gots_certificate_enabled', true);
+    $cert_template_id = get_post_meta($id, '_gots_certificate_template_id', true);
+    $cert_issuer_name = get_post_meta($id, '_gots_certificate_issuer_name', true);
+    update_post_meta($new_post_id, '_gots_certificate_enabled',     $cert_enabled ?: '');
+    update_post_meta($new_post_id, '_gots_certificate_template_id', $cert_template_id ?: 0);
+    update_post_meta($new_post_id, '_gots_certificate_issuer_name', $cert_issuer_name ?: '');
+
     // copy the slides, but generate new slide IDs so the copy is independent
     $slides_json = get_post_meta($id, '_gots_slides', true);
     $slides = array();
@@ -1153,6 +1181,45 @@ function gots_rest_get_analytics_slides($request) {
 // ── Certificate REST callbacks ─────────────────────────────────────────────────
 
 /**
+ * POST /tutorials/{id}/certificate/completion-proof
+ *
+ * Issues a signed completion-proof token at the moment the student actually
+ * finishes the tutorial in their browser.  The proof is required by the issue
+ * endpoint, keeping the server in control of when proofs may be obtained.
+ *
+ * Rate-limited to 5 proof requests per student per tutorial per hour to
+ * prevent proof farming while still allowing retries on network failures.
+ *
+ * @param WP_REST_Request $request
+ * @return WP_REST_Response|WP_Error
+ */
+function gots_rest_request_completion_proof($request) {
+    $tutorial_id = absint($request->get_param('id'));
+
+    $post = get_post($tutorial_id);
+    if (!$post || $post->post_type !== 'gots_tutorial' || $post->post_status !== 'publish') {
+        return new WP_Error('tutorial_unavailable', 'Tutorial not available.', array('status' => 404));
+    }
+
+    if (empty(get_post_meta($tutorial_id, '_gots_certificate_enabled', true))) {
+        return new WP_Error('cert_disabled', 'Certificates are not enabled for this tutorial.', array('status' => 403));
+    }
+
+    $student_id = gots_get_student_identifier();
+
+    // Rate-limit proof requests: 5 per student per tutorial per hour
+    $rl_key   = 'gots_proof_rl_' . substr(hash('sha256', $student_id . $tutorial_id), 0, 24);
+    $rl_count = (int) get_transient($rl_key);
+    if ($rl_count >= 5) {
+        return new WP_Error('rate_limited', 'Too many proof requests. Please wait before trying again.', array('status' => 429));
+    }
+    set_transient($rl_key, $rl_count + 1, HOUR_IN_SECONDS);
+
+    $proof = gots_generate_completion_proof($tutorial_id, $student_id);
+    return rest_ensure_response(array('completionProof' => $proof));
+}
+
+/**
  * POST /tutorials/{id}/certificate/issue
  *
  * Request body:
@@ -1197,6 +1264,57 @@ function gots_rest_issue_certificate($request) {
 }
 
 /**
+ * POST /tutorials/{id}/certificate/preview
+ *
+ * Renders a real certificate PDF using the tutorial's configured template but
+ * with a PREVIEW-0000 certificate ID. Nothing is written to the database.
+ * Requires write (editor) permission so only admins previewing can call it.
+ *
+ * @param WP_REST_Request $request
+ * @return WP_Error  Only on failure; success streams PDF and exits.
+ */
+function gots_rest_preview_tutorial_certificate($request) {
+    $tutorial_id = absint($request->get_param('id'));
+    $params      = $request->get_json_params() ?: array();
+
+    $post = get_post($tutorial_id);
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error('tutorial_not_found', 'Tutorial not found.', array('status' => 404));
+    }
+
+    $recipient_name = isset($params['recipientName']) ? sanitize_text_field($params['recipientName']) : 'Jane Student';
+
+    $template = gots_resolve_tutorial_template($tutorial_id);
+
+    $cert_settings = gots_get_tutorial_cert_settings($tutorial_id);
+    $issuer_name   = !empty($cert_settings['issuer_name'])
+        ? $cert_settings['issuer_name']
+        : get_bloginfo('name');
+
+    $values = array(
+        'recipient_name'  => $recipient_name,
+        'tutorial_title'  => get_the_title($tutorial_id),
+        'completion_date' => current_time('Y-m-d'),
+        'issuer_name'     => $issuer_name,
+        'certificate_id'  => 'PREVIEW-0000',
+    );
+
+    $html  = gots_render_certificate_html($template, $values);
+    $bytes = gots_render_pdf($html, array('paper_size' => 'letter', 'orientation' => 'landscape'));
+
+    if (is_wp_error($bytes)) {
+        return $bytes;
+    }
+
+    nocache_headers();
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="certificate-preview.pdf"');
+    header('Content-Length: ' . strlen($bytes));
+    echo $bytes;
+    exit;
+}
+
+/**
  * GET /certificates/{token}/download
  *
  * Streams the certificate PDF to the browser.
@@ -1234,6 +1352,15 @@ function gots_rest_download_certificate($request) {
 function gots_rest_verify_certificate($request) {
     $vid = $request->get_param('verification_id');
     $vid = is_string($vid) ? sanitize_text_field($vid) : '';
+
+    // Rate-limit public verify: 60 lookups per IP per hour to prevent enumeration
+    $ip_hash  = substr(hash('sha256', gots_get_client_ip()), 0, 24);
+    $rl_key   = 'gots_verify_rl_' . $ip_hash;
+    $rl_count = (int) get_transient($rl_key);
+    if ($rl_count >= 60) {
+        return new WP_Error('rate_limited', 'Too many verification requests. Please wait before trying again.', array('status' => 429));
+    }
+    set_transient($rl_key, $rl_count + 1, HOUR_IN_SECONDS);
 
     $row = gots_lookup_certificate_by_verification_token($vid);
     if (!$row) {
@@ -1307,6 +1434,18 @@ function gots_rest_update_cert_template($request) {
  */
 function gots_rest_delete_cert_template($request) {
     $template_id = absint($request->get_param('id'));
+    $params      = $request->get_json_params() ?: array();
+    $confirmed   = !empty($params['confirmed']);
+
+    // If not confirmed, return usage info so the frontend can warn the user
+    $affected = gots_get_tutorials_using_template($template_id);
+    if (!$confirmed && !empty($affected)) {
+        return rest_ensure_response(array(
+            'deleted'            => false,
+            'confirmRequired'    => true,
+            'affectedTutorials'  => $affected,
+        ));
+    }
 
     $result = gots_delete_template($template_id);
     if (is_wp_error($result)) {

@@ -42,8 +42,11 @@ export async function updateTemplate(id, data) {
   });
 }
 
-export async function deleteTemplate(id) {
-  return apiRequest(`/certificate-templates/${id}`, { method: 'DELETE' });
+export async function deleteTemplate(id, { confirmed = false } = {}) {
+  return apiRequest(`/certificate-templates/${id}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ confirmed }),
+  });
 }
 
 /**

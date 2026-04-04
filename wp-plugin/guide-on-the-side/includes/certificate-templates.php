@@ -340,8 +340,26 @@ function gots_list_templates() {
         OBJECT
     );
 
+    // Defensive: ensure at most one template is marked as default.
+    // If multiple have is_default = 1 (stale data), keep the first and fix the rest.
+    $found_default = false;
     foreach ($rows as $row) {
         $row->config_json = json_decode($row->config_json, true) ?: array();
+        // Cast numeric fields so JSON encodes them as integers, not strings.
+        $row->id             = (int) $row->id;
+        $row->is_default     = (int) $row->is_default;
+        $row->is_active      = (int) $row->is_active;
+        $row->logo_media_id  = $row->logo_media_id !== null ? (int) $row->logo_media_id : null;
+
+        if ($row->is_default === 1) {
+            if ($found_default) {
+                // Extra default — fix it in DB and in the response
+                $row->is_default = 0;
+                $wpdb->update($table, array('is_default' => 0), array('id' => $row->id), array('%d'), array('%d'));
+            } else {
+                $found_default = true;
+            }
+        }
     }
 
     return $rows ?: array();
@@ -366,7 +384,11 @@ function gots_get_template($template_id) {
         return null;
     }
 
-    $row->config_json = json_decode($row->config_json, true) ?: array();
+    $row->config_json    = json_decode($row->config_json, true) ?: array();
+    $row->id             = (int) $row->id;
+    $row->is_default     = (int) $row->is_default;
+    $row->is_active      = (int) $row->is_active;
+    $row->logo_media_id  = $row->logo_media_id !== null ? (int) $row->logo_media_id : null;
     return $row;
 }
 
@@ -489,6 +511,44 @@ function gots_delete_template($template_id) {
     }
 
     return true;
+}
+
+/**
+ * Find all tutorials that have a specific certificate template assigned.
+ *
+ * Returns an array of { id, title, status } objects.
+ *
+ * @param int $template_id
+ * @return array
+ */
+function gots_get_tutorials_using_template($template_id) {
+    $template_id = absint($template_id);
+    if ($template_id < 1) return array();
+
+    $query = new WP_Query(array(
+        'post_type'      => 'gots_tutorial',
+        'post_status'    => array('publish', 'draft'),
+        'posts_per_page' => -1,
+        'meta_query'     => array(
+            array(
+                'key'     => '_gots_certificate_template_id',
+                'value'   => $template_id,
+                'compare' => '=',
+                'type'    => 'NUMERIC',
+            ),
+        ),
+        'fields'         => 'ids',
+    ));
+
+    $results = array();
+    foreach ($query->posts as $post_id) {
+        $results[] = array(
+            'id'     => (int) $post_id,
+            'title'  => get_the_title($post_id),
+            'status' => get_post_status($post_id),
+        );
+    }
+    return $results;
 }
 
 // ─── Tutorial linkage ─────────────────────────────────────────────────────────

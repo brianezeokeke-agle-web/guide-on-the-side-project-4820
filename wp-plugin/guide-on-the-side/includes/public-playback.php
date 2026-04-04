@@ -256,11 +256,10 @@ function gots_render_playback_page($tutorial_id, $post, $is_preview = false) {
             'analyticsToken' => hash_hmac('sha256', 'gots_analytics_' . $tutorial_id, wp_salt('auth')),
         );
 
-        // Certificate support: inject a signed completion proof and user display name
-        // The proof is valid for 15 minutes; it is sent back with the issue request
-        // so the server can verify the student reached this page legitimately.
-        $student_id               = gots_get_student_identifier();
-        $config['completionProof'] = gots_generate_completion_proof($tutorial_id, $student_id, $is_preview);
+        // Certificate support: the completion proof is requested on-demand by the
+        // student app at the moment the tutorial is actually completed, not pre-issued
+        // here.  We only pass whether certificates are enabled so the UI can show
+        // or hide the certificate section without an extra round-trip.
         $config['certificateEnabled'] = (bool) get_post_meta($tutorial_id, '_gots_certificate_enabled', true);
 
         if (is_user_logged_in()) {

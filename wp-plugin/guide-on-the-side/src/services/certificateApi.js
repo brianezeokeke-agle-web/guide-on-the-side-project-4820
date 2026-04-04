@@ -34,18 +34,38 @@ async function apiRequest(endpoint, options = {}) {
 }
 
 /**
+ * Request a signed completion-proof token from the server.
+ * Must be called at the moment of genuine tutorial completion.
+ *
+ * @param {number} tutorialId
+ * @returns {Promise<string>}  The completionProof token.
+ */
+export async function requestCompletionProof(tutorialId) {
+  const response = await apiRequest(`/tutorials/${tutorialId}/certificate/completion-proof`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.message || `Failed to get completion proof (${response.status})`);
+  }
+
+  const data = await response.json();
+  return data.completionProof;
+}
+
+/**
  * Issue a certificate for a completed tutorial.
  *
  * @param {number} tutorialId
- * @param {{ recipientName: string, idempotencyKey?: string }} payload
+ * @param {{ recipientName: string, completionProof: string, idempotencyKey?: string }} payload
  * @returns {Promise<{ certificateId: number, downloadUrl: string, expiresAt: string }>}
  */
 export async function issueCertificate(tutorialId, payload) {
-  const config = getConfig();
-
   const body = {
     recipientName:   payload.recipientName,
-    completionProof: config.completionProof,
+    completionProof: payload.completionProof,
   };
 
   if (payload.idempotencyKey) {
@@ -68,19 +88,40 @@ export async function issueCertificate(tutorialId, payload) {
 /**
  * Trigger a browser download for a certificate given a downloadUrl returned by issueCertificate.
  *
- * Uses a hidden <a> tag so the PDF opens as a download without navigating away.
+ * Fetches the PDF as a blob first, then triggers a download via an Object URL.
+ * A plain <a download> doesn't work reliably with REST API URLs because the
+ * browser treats them as cross-origin or navigates instead of downloading.
  *
  * @param {string} downloadUrl
  * @param {string} [filename]
+ * @returns {Promise<void>}
  */
-export function downloadCertificate(downloadUrl, filename = 'certificate.pdf') {
+export async function downloadCertificate(downloadUrl, filename = 'certificate.pdf') {
+  const config = getConfig();
+  const headers = {};
+  if (config.nonce) {
+    headers['X-WP-Nonce'] = config.nonce;
+  }
+
+  const response = await fetch(downloadUrl, {
+    credentials: 'same-origin',
+    headers,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Download failed (${response.status})`);
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = downloadUrl;
+  a.href = url;
   a.download = filename;
   a.style.display = 'none';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 /**

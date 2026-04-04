@@ -1,6 +1,6 @@
 // Unit tests: certificateApi.js (student-side certificate issuance)
 
-import { issueCertificate, downloadCertificate, verifyCertificate } from './certificateApi';
+import { issueCertificate, downloadCertificate, verifyCertificate, requestCompletionProof } from './certificateApi';
 
 global.fetch = jest.fn();
 
@@ -34,7 +34,7 @@ describe('certificateApi', () => {
       }),
     });
 
-    const result = await issueCertificate(42, { recipientName: 'Alice' });
+    const result = await issueCertificate(42, { recipientName: 'Alice', completionProof: mockProof });
 
     expect(fetch).toHaveBeenCalledWith(
       `${restUrl}/tutorials/42/certificate/issue`,
@@ -103,29 +103,53 @@ describe('certificateApi', () => {
     expect(fetch.mock.calls[0][0]).toContain('/wp-json/gots/v1/tutorials/3/certificate/issue');
   });
 
-  test('issueCertificate sends empty completionProof when not in config', async () => {
-    window.gotsStudentConfig = { restUrl, nonce: null };
-
+  test('issueCertificate sends the completionProof supplied in the payload', async () => {
     fetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({ certificateId: 4, downloadUrl: '', expiresAt: '' }),
     });
 
-    await issueCertificate(4, { recipientName: 'Grace' });
+    await issueCertificate(4, { recipientName: 'Grace', completionProof: 'payload-proof' });
 
     const body = JSON.parse(fetch.mock.calls[0][1].body);
-    expect(body.completionProof).toBe('');
+    expect(body.completionProof).toBe('payload-proof');
   });
 
   // ── downloadCertificate ───────────────────────────────────────────────────
 
-  test('downloadCertificate creates and clicks a hidden anchor', () => {
-    const url = 'https://example.com/cert.pdf';
-    downloadCertificate(url, 'my-cert.pdf');
+  test('downloadCertificate fetches blob and triggers download', async () => {
+    const mockBlob = new Blob(['fake-pdf'], { type: 'application/pdf' });
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      blob: async () => mockBlob,
+    });
 
-    // After click the element is removed, so we check via click spy
-    // The function should complete without throwing
-    expect(true).toBe(true);
+    // jsdom doesn't have URL.createObjectURL/revokeObjectURL
+    const origCreate = URL.createObjectURL;
+    const origRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = jest.fn().mockReturnValue('blob:fake-url');
+    URL.revokeObjectURL = jest.fn();
+
+    await downloadCertificate('https://example.com/cert-download', 'my-cert.pdf');
+
+    expect(fetch).toHaveBeenCalledWith(
+      'https://example.com/cert-download',
+      expect.objectContaining({ credentials: 'same-origin' })
+    );
+    expect(URL.createObjectURL).toHaveBeenCalledWith(mockBlob);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:fake-url');
+
+    URL.createObjectURL = origCreate;
+    URL.revokeObjectURL = origRevoke;
+  });
+
+  test('downloadCertificate throws on failed response', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+    });
+
+    await expect(downloadCertificate('https://example.com/missing')).rejects.toThrow('Download failed (404)');
   });
 
   // ── verifyCertificate ─────────────────────────────────────────────────────
@@ -141,5 +165,76 @@ describe('certificateApi', () => {
     expect(fetch.mock.calls[0][0]).toContain('/certificates/verify/');
     expect(fetch.mock.calls[0][0]).toContain(encodeURIComponent('abc-uuid-123'));
     expect(result.valid).toBe(true);
+  });
+
+  test('verifyCertificate throws on rate-limit response', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 429,
+      json: async () => ({ message: 'Too many verification requests. Please wait before trying again.' }),
+    });
+
+    await expect(verifyCertificate('any-id')).rejects.toThrow('Too many verification requests');
+  });
+
+  // ── requestCompletionProof ────────────────────────────────────────────────
+
+  test('requestCompletionProof POSTs to completion-proof endpoint and returns token', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ completionProof: 'fresh-proof-token' }),
+    });
+
+    const proof = await requestCompletionProof(42);
+
+    expect(fetch).toHaveBeenCalledWith(
+      `${restUrl}/tutorials/42/certificate/completion-proof`,
+      expect.objectContaining({ method: 'POST' })
+    );
+    expect(proof).toBe('fresh-proof-token');
+  });
+
+  test('requestCompletionProof throws when cert is disabled on tutorial', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      json: async () => ({ message: 'Certificates are not enabled for this tutorial.' }),
+    });
+
+    await expect(requestCompletionProof(5)).rejects.toThrow('Certificates are not enabled');
+  });
+
+  test('requestCompletionProof throws on rate limit', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 429,
+      json: async () => ({ message: 'Too many proof requests. Please wait before trying again.' }),
+    });
+
+    await expect(requestCompletionProof(5)).rejects.toThrow('Too many proof requests');
+  });
+
+  // ── issueCertificate error paths ──────────────────────────────────────────
+
+  test('issueCertificate throws proof_expired error with server message', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      json: async () => ({ message: 'Completion proof has expired.' }),
+    });
+
+    await expect(issueCertificate(1, { recipientName: 'Alice', completionProof: 'old-proof' }))
+      .rejects.toThrow('Completion proof has expired.');
+  });
+
+  test('issueCertificate throws proof_mismatch error with server message', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      json: async () => ({ message: 'Completion proof is not valid for this student.' }),
+    });
+
+    await expect(issueCertificate(1, { recipientName: 'Bob', completionProof: 'wrong-proof' }))
+      .rejects.toThrow('Completion proof is not valid for this student.');
   });
 });

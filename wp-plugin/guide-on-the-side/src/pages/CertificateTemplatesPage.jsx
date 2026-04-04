@@ -82,7 +82,7 @@ export default function CertificateTemplatesPage() {
     setEditingId(template.id);
     setForm({
       name:            template.name,
-      is_default:      !!template.is_default,
+      is_default:      Number(template.is_default) === 1,
       layout_type:     template.layout_type || "classic",
       logo_media_id:   template.logo_media_id != null ? Number(template.logo_media_id) : null,
       config_json:     { ...EMPTY_CONFIG, ...template.config_json },
@@ -134,9 +134,40 @@ export default function CertificateTemplatesPage() {
   }
 
   async function handleDelete(template) {
-    if (!window.confirm(`Delete template "${template.name}"? This cannot be undone.`)) return;
     try {
-      await deleteTemplate(template.id);
+      // First call: check if any tutorials use this template
+      const check = await deleteTemplate(template.id);
+
+      if (check.confirmRequired) {
+        const published = check.affectedTutorials.filter((t) => t.status === 'published');
+        const drafts    = check.affectedTutorials.filter((t) => t.status !== 'published');
+
+        let message = `Delete template "${template.name}"?\n\n`;
+        message += `This template is currently used by ${check.affectedTutorials.length} tutorial(s):\n\n`;
+
+        if (published.length > 0) {
+          message += `LIVE (published):\n`;
+          published.forEach((t) => { message += `  • ${t.title}\n`; });
+          message += `\nThese live tutorials will fall back to the default template for future certificates.\n\n`;
+        }
+        if (drafts.length > 0) {
+          message += `Drafts:\n`;
+          drafts.forEach((t) => { message += `  • ${t.title}\n`; });
+          message += `\n`;
+        }
+
+        message += `Do you want to proceed?`;
+
+        if (!window.confirm(message)) return;
+
+        // Second call: confirmed deletion
+        await deleteTemplate(template.id, { confirmed: true });
+      } else if (!check.deleted) {
+        // Unexpected state
+        if (!window.confirm(`Delete template "${template.name}"? This cannot be undone.`)) return;
+        await deleteTemplate(template.id, { confirmed: true });
+      }
+
       await loadTemplates();
       if (editingId === template.id) closeForm();
     } catch (err) {
@@ -185,7 +216,7 @@ export default function CertificateTemplatesPage() {
         <div style={styles.header}>
           <h1 style={styles.pageTitle}>Certificate Templates</h1>
           <button onClick={openNew} style={styles.primaryButton}>
-            + New Template
+            New Template
           </button>
         </div>
 
@@ -204,7 +235,7 @@ export default function CertificateTemplatesPage() {
               <div key={t.id} style={styles.card}>
                 <div style={styles.cardHeader}>
                   <span style={styles.cardName}>{t.name}</span>
-                  {t.is_default ? (
+                  {Number(t.is_default) === 1 ? (
                     <span style={styles.defaultBadge}>Default</span>
                   ) : null}
                 </div>
@@ -372,13 +403,17 @@ export default function CertificateTemplatesPage() {
                       />
                       Show Seal
                     </label>
-                    <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: "pointer" }}>
+                    <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: form.is_default && editingId ? "not-allowed" : "pointer" }}>
                       <input
                         type="checkbox"
                         checked={!!form.is_default}
+                        disabled={!!form.is_default && !!editingId}
                         onChange={(e) => setForm((p) => ({ ...p, is_default: e.target.checked }))}
                       />
                       Set as Default
+                      {!!form.is_default && !!editingId && (
+                        <span style={{ fontSize: "11px", color: "#9ca3af", marginLeft: "4px" }}>(set another template as default to change this)</span>
+                      )}
                     </label>
                   </div>
 
@@ -401,13 +436,17 @@ export default function CertificateTemplatesPage() {
 
               {form.layout_type === "custom_html" && (
                 <div style={{ marginBottom: "12px" }}>
-                  <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: "pointer" }}>
+                  <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: form.is_default && editingId ? "not-allowed" : "pointer" }}>
                     <input
                       type="checkbox"
                       checked={!!form.is_default}
+                      disabled={!!form.is_default && !!editingId}
                       onChange={(e) => setForm((p) => ({ ...p, is_default: e.target.checked }))}
                     />
                     Set as Default
+                    {!!form.is_default && !!editingId && (
+                      <span style={{ fontSize: "11px", color: "#9ca3af", marginLeft: "4px" }}>(set another template as default to change this)</span>
+                    )}
                   </label>
                 </div>
               )}

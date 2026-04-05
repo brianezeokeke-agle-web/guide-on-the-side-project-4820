@@ -14,7 +14,6 @@ import {
   listTutorialThemes,
 } from "../services/tutorialThemeApi";
 import { THEME_FIELD_DEFS, THEME_TOKEN_DEFAULTS } from "../services/themeSchema";
-import { resolveEffectiveTokens } from "../services/themeHelpers";
 import {
   buildBranchChildrenMap,
   buildRegularSlideOrder,
@@ -1046,36 +1045,48 @@ function BranchConfigEditor({ slide, allSlides, isPublished, onSlidePatch, onBlu
 // Lets authors override individual shell-level tokens for a single slide.
 function SlideThemeOverrideEditor({ slide, isPublished, onSlidePatch }) {
   const [expanded, setExpanded] = useState(false);
-  const patchTimerRef   = useRef(null);
-  const pendingTokensRef = useRef(null);
+  const patchTimerRef = useRef(null);
 
-  const override = slide.themeOverride || { enabled: false, tokens: {} };
+  const override  = slide.themeOverride || { enabled: false, tokens: {} };
   const isEnabled = override.enabled === true;
-  const tokens = override.tokens || {};
+  const propTokens = override.tokens || {};
 
-  // Keep the ref current so debounced callbacks always merge into the latest base.
-  pendingTokensRef.current = tokens;
+  // Local draft mirrors prop tokens and updates immediately on every keystroke/drag
+  // so controlled inputs feel responsive. Persistence is debounced separately.
+  const [draftTokens, setDraftTokens] = useState(propTokens);
 
-  // Cancel any pending debounced save when the component unmounts (e.g. slide switch).
+  // Sync draft when the active slide changes (user clicks a different slide).
+  const slideId = slide.slideId;
+  useEffect(() => {
+    clearTimeout(patchTimerRef.current);
+    setDraftTokens(slide.themeOverride?.tokens || {});
+  }, [slideId]);
+
+  // Cancel any pending debounced save on unmount.
   useEffect(() => () => clearTimeout(patchTimerRef.current), []);
 
   const handleToggleEnabled = (checked) => {
     clearTimeout(patchTimerRef.current);
+    setDraftTokens({});
     onSlidePatch({ themeOverride: checked ? { enabled: true, tokens: {} } : null });
   };
 
-  // Immediate persist — safe for discrete inputs (select, bool).
+  // Discrete inputs (select, bool) — update draft and persist immediately.
   const setToken = (key, value) => {
-    onSlidePatch({ themeOverride: { enabled: true, tokens: { ...pendingTokensRef.current, [key]: value } } });
+    const next = { ...draftTokens, [key]: value };
+    setDraftTokens(next);
+    onSlidePatch({ themeOverride: { enabled: true, tokens: next } });
   };
 
-  // Debounced persist — color pickers fire onChange on every drag frame.
-  // Coalesces rapid updates into a single save 400 ms after the last change.
+  // Continuous inputs (color picker, hex text) — update draft immediately for
+  // responsive rendering; coalesce rapid changes into a single persist 400 ms
+  // after the last change so the server isn't hit on every drag frame.
   const setTokenDebounced = (key, value) => {
-    pendingTokensRef.current = { ...pendingTokensRef.current, [key]: value };
+    const next = { ...draftTokens, [key]: value };
+    setDraftTokens(next);
     clearTimeout(patchTimerRef.current);
     patchTimerRef.current = setTimeout(() => {
-      onSlidePatch({ themeOverride: { enabled: true, tokens: { ...pendingTokensRef.current } } });
+      onSlidePatch({ themeOverride: { enabled: true, tokens: next } });
     }, 400);
   };
 
@@ -1111,14 +1122,14 @@ function SlideThemeOverrideEditor({ slide, isPublished, onSlidePatch }) {
                 <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "10px" }}>
                   <input
                     type="color"
-                    value={tokens[key] || THEME_TOKEN_DEFAULTS[key] || "#ffffff"}
+                    value={draftTokens[key] || THEME_TOKEN_DEFAULTS[key] || "#ffffff"}
                     disabled={isPublished}
                     onChange={(e) => setTokenDebounced(key, e.target.value)}
                     style={{ width: "36px", height: "28px", border: "none", cursor: isPublished ? "not-allowed" : "pointer" }}
                   />
                   <input
                     type="text"
-                    value={tokens[key] || ""}
+                    value={draftTokens[key] || ""}
                     disabled={isPublished}
                     onChange={(e) => setTokenDebounced(key, e.target.value)}
                     placeholder={`inherit (${THEME_TOKEN_DEFAULTS[key]})`}
@@ -1129,7 +1140,7 @@ function SlideThemeOverrideEditor({ slide, isPublished, onSlidePatch }) {
               )}
               {type === "select" && (
                 <select
-                  value={tokens[key] || ""}
+                  value={draftTokens[key] || ""}
                   disabled={isPublished}
                   onChange={(e) => setToken(key, e.target.value)}
                   style={{ width: "100%", padding: "6px 8px", fontSize: "13px", border: "1px solid #d1d5db", borderRadius: "4px", backgroundColor: "#fff", marginBottom: "10px", boxSizing: "border-box" }}
@@ -1144,7 +1155,7 @@ function SlideThemeOverrideEditor({ slide, isPublished, onSlidePatch }) {
                 <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: isPublished ? "not-allowed" : "pointer", marginBottom: "10px", fontSize: "13px" }}>
                   <input
                     type="checkbox"
-                    checked={key in tokens ? !!tokens[key] : !!THEME_TOKEN_DEFAULTS[key]}
+                    checked={key in draftTokens ? !!draftTokens[key] : !!THEME_TOKEN_DEFAULTS[key]}
                     disabled={isPublished}
                     onChange={(e) => setToken(key, e.target.checked)}
                   />
@@ -1544,6 +1555,7 @@ export default function TutorialEditorPage() {
     }
 
     if (themeResult.status === "fulfilled") {
+      setThemeSettings(themeResult.value);
       setThemeSaveStatus("Saved");
     } else {
       setThemeSaveStatus("Error: " + themeResult.reason?.message);

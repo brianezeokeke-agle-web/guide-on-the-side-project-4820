@@ -997,6 +997,7 @@ const styles = {
     borderRadius: "12px",
     padding: "32px",
     boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
+    fontFamily: "system-ui, -apple-system, sans-serif",// Reset fontFamily so theme shell tokens don't bleed into content card typography.
   },
   slideTitle: {
     fontSize: "24px",

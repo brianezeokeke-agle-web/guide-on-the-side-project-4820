@@ -20,7 +20,7 @@ import {
   updateTutorialTheme,
   deleteTutorialTheme,
 } from "../services/tutorialThemeApi";
-import { THEME_FONTS, THEME_BUTTON_STYLES, THEME_TOKEN_DEFAULTS, THEME_FIELD_DEFS } from "../services/themeSchema";
+import { THEME_TOKEN_DEFAULTS, THEME_FIELD_DEFS } from "../services/themeSchema";
 
 const EMPTY_CONFIG = { ...THEME_TOKEN_DEFAULTS };
 

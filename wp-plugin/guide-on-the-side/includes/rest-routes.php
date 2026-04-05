@@ -565,8 +565,14 @@ function gots_rest_get_tutorial_public($request) {
         }
     }
     
-    // return the tutorial data for student playback
-    return rest_ensure_response(gots_format_tutorial_response($post));
+    // Return tutorial data for student playback.
+    // Resolve and embed the effective theme config here only — this is the one
+    // endpoint that needs it. Keeping it out of gots_format_tutorial_response()
+    // avoids an extra theme-table lookup on every admin list/detail call.
+    $data = gots_format_tutorial_response($post);
+    $resolved_theme          = gots_resolve_tutorial_theme($post->ID);
+    $data['theme_config']    = isset($resolved_theme->config_json) ? $resolved_theme->config_json : null;
+    return rest_ensure_response($data);
 }
 
 /**

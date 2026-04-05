@@ -417,23 +417,16 @@ function gots_format_tutorial_response($post) {
     // Read theme_id; return null if not set (existing tutorials default to no theme)
     $raw_theme_id = (int) get_post_meta($post->ID, '_gots_theme_id', true);
 
-    // Resolve the effective theme config so the student player can apply tokens
-    // without a second round-trip. gots_resolve_tutorial_theme() never returns
-    // null — it falls back to the built-in default if no theme is assigned.
-    $resolved_theme = gots_resolve_tutorial_theme($post->ID);
-    $theme_config   = isset($resolved_theme->config_json) ? $resolved_theme->config_json : null;
-
     return array(
-        'tutorialId'   => (string) $post->ID,
-        'title'        => $post->post_title,
-        'description'  => $description ?: '',
-        'status'       => gots_map_wp_status_to_api($post->post_status),
-        'archived'     => (bool) $archived,
-        'createdAt'    => $created_at,
-        'updatedAt'    => $updated_at,
-        'slides'       => $slides,
-        'theme_id'     => $raw_theme_id > 0 ? $raw_theme_id : null,
-        'theme_config' => $theme_config,
+        'tutorialId'  => (string) $post->ID,
+        'title'       => $post->post_title,
+        'description' => $description ?: '',
+        'status'      => gots_map_wp_status_to_api($post->post_status),
+        'archived'    => (bool) $archived,
+        'createdAt'   => $created_at,
+        'updatedAt'   => $updated_at,
+        'slides'      => $slides,
+        'theme_id'    => $raw_theme_id > 0 ? $raw_theme_id : null,
     );
 }
 

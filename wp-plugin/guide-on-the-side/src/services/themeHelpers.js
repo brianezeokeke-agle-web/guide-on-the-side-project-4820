@@ -100,6 +100,8 @@ export function tokensToProgressBarStyle(tokens) {
 // The system default left-pane ratio when no tutorial or slide value is configured.
 // Matches the previous hardcoded "30% 70%" split in StudentApp.jsx.
 export const LAYOUT_DEFAULT_LEFT_RATIO = 30;
+export const LAYOUT_MIN_LEFT_RATIO = 10;
+export const LAYOUT_MAX_LEFT_RATIO = 50;
 
 /**
  * Resolve the effective left-pane width percentage for a slide.

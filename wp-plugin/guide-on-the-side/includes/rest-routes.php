@@ -1817,10 +1817,15 @@ function gots_rest_update_tutorial_layout_settings($request) {
         return new WP_Error('tutorial_not_found', 'Tutorial not found.', array('status' => 404));
     }
 
-    // leftPaneRatio: integer 10–50, or null/0 to clear the setting
-    $ratio = isset($params['leftPaneRatio']) ? absint($params['leftPaneRatio']) : 0;
+    // leftPaneRatio: integer 10–50, or null/absent to clear the setting.
+    // is_numeric() must come BEFORE absint() — absint("wide") silently returns 0,
+    // which would bypass the range check and incorrectly clear the stored value.
+    if (!array_key_exists('leftPaneRatio', $params) || $params['leftPaneRatio'] === null) {
+        gots_save_tutorial_layout_settings($tutorial_id, array('leftPaneRatio' => null));
+        return rest_ensure_response(gots_get_tutorial_layout_settings($tutorial_id));
+    }
 
-    if ($ratio !== 0 && ($ratio < 10 || $ratio > 50)) {
+    if (!is_numeric($params['leftPaneRatio'])) {
         return new WP_Error(
             'invalid_ratio',
             'leftPaneRatio must be between 10 and 50.',
@@ -1828,7 +1833,17 @@ function gots_rest_update_tutorial_layout_settings($request) {
         );
     }
 
-    gots_save_tutorial_layout_settings($tutorial_id, array('leftPaneRatio' => $ratio ?: null));
+    $ratio = absint($params['leftPaneRatio']);
+
+    if ($ratio < 10 || $ratio > 50) {
+        return new WP_Error(
+            'invalid_ratio',
+            'leftPaneRatio must be between 10 and 50.',
+            array('status' => 400)
+        );
+    }
+
+    gots_save_tutorial_layout_settings($tutorial_id, array('leftPaneRatio' => $ratio));
 
     return rest_ensure_response(gots_get_tutorial_layout_settings($tutorial_id));
 }

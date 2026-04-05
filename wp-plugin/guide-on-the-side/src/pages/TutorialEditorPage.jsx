@@ -19,6 +19,11 @@ import {
 } from "../services/tutorialLayoutApi";
 import { THEME_FIELD_DEFS, THEME_TOKEN_DEFAULTS } from "../services/themeSchema";
 import {
+  LAYOUT_DEFAULT_LEFT_RATIO,
+  LAYOUT_MIN_LEFT_RATIO,
+  LAYOUT_MAX_LEFT_RATIO,
+} from "../services/themeHelpers";
+import {
   buildBranchChildrenMap,
   buildRegularSlideOrder,
   buildSlidesById,
@@ -840,13 +845,13 @@ function BranchConfigEditor({ slide, allSlides, isPublished, onSlidePatch, onBlu
   const layoutOverrideEnabled = layoutOverride?.enabled === true;
   const layoutRatio = (layoutOverrideEnabled && typeof layoutOverride.leftPaneRatio === "number")
     ? layoutOverride.leftPaneRatio
-    : 30;
+    : LAYOUT_DEFAULT_LEFT_RATIO;
 
   const handleToggleLayoutOverride = (checked) => {
-    onSlidePatch({ layoutOverride: checked ? { enabled: true, leftPaneRatio: 30 } : null });
+    onSlidePatch({ layoutOverride: checked ? { enabled: true, leftPaneRatio: LAYOUT_DEFAULT_LEFT_RATIO } : null });
   };
   const handleSetLayoutRatio = (raw) => {
-    const n = Math.min(50, Math.max(10, parseInt(raw, 10) || 30));
+    const n = Math.min(LAYOUT_MAX_LEFT_RATIO, Math.max(LAYOUT_MIN_LEFT_RATIO, parseInt(raw, 10) || LAYOUT_DEFAULT_LEFT_RATIO));
     onSlidePatch({ layoutOverride: { enabled: true, leftPaneRatio: n } });
   };
   const propTokens     = override.tokens || {};
@@ -1190,8 +1195,8 @@ function BranchConfigEditor({ slide, allSlides, isPublished, onSlidePatch, onBlu
                 </label>
                 <input
                   type="range"
-                  min="10"
-                  max="50"
+                  min={LAYOUT_MIN_LEFT_RATIO}
+                  max={LAYOUT_MAX_LEFT_RATIO}
                   step="1"
                   value={layoutRatio}
                   disabled={isPublished}
@@ -2396,18 +2401,35 @@ export default function TutorialEditorPage() {
                 <p style={{ fontSize: "12px", color: "#9ca3af", margin: "0 0 8px 0" }}>
                   Controls the playback width split between the slide content and interactive content.
                 </p>
-                <input
-                  type="range"
-                  min="10"
-                  max="50"
-                  step="1"
-                  value={layoutSettings.leftPaneRatio ?? 30}
-                  onChange={(e) => setLayoutSettings((p) => ({ ...p, leftPaneRatio: Number(e.target.value) }))}
-                  style={{ width: "100%", cursor: "pointer" }}
-                />
-                <p style={{ fontSize: "12px", color: "#6b7280", marginTop: "4px" }}>
-                  Left pane: {layoutSettings.leftPaneRatio ?? 30}% · Right pane: {100 - (layoutSettings.leftPaneRatio ?? 30)}%
-                </p>
+                <label style={{ ...styles.branchCheckboxLabel, marginBottom: "10px" }}>
+                  <input
+                    type="checkbox"
+                    checked={layoutSettings.leftPaneRatio === null}
+                    onChange={(e) =>
+                      setLayoutSettings((p) => ({
+                        ...p,
+                        leftPaneRatio: e.target.checked ? null : LAYOUT_DEFAULT_LEFT_RATIO,
+                      }))
+                    }
+                  />
+                  Use system default ({LAYOUT_DEFAULT_LEFT_RATIO}% - 70%)
+                </label>
+                {layoutSettings.leftPaneRatio !== null && (
+                  <>
+                    <input
+                      type="range"
+                      min={LAYOUT_MIN_LEFT_RATIO}
+                      max={LAYOUT_MAX_LEFT_RATIO}
+                      step="1"
+                      value={layoutSettings.leftPaneRatio}
+                      onChange={(e) => setLayoutSettings((p) => ({ ...p, leftPaneRatio: Number(e.target.value) }))}
+                      style={{ width: "100%", cursor: "pointer" }}
+                    />
+                    <p style={{ fontSize: "12px", color: "#6b7280", marginTop: "4px" }}>
+                      Left pane: {layoutSettings.leftPaneRatio}% · Right pane: {100 - layoutSettings.leftPaneRatio}%
+                    </p>
+                  </>
+                )}
               </div>
               {layoutSaveStatus && (
                 <span style={{ fontSize: "13px", marginTop: "8px", display: "block", color: layoutSaveStatus.startsWith("Error") ? "#dc2626" : "#16a34a" }}>

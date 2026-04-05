@@ -180,6 +180,27 @@ describe('themeHelpers', () => {
       )).toBe(25);
     });
 
+    test('allowStudentResize on slide override does not change resolved ratio', () => {
+      expect(resolveEffectivePaneRatio(
+        { leftPaneRatio: 40 },
+        { enabled: true, leftPaneRatio: 25, allowStudentResize: true },
+      )).toBe(25);
+    });
+
+    test('paneRatioCustomized false ignores slide leftPaneRatio and uses tutorial', () => {
+      expect(resolveEffectivePaneRatio(
+        { leftPaneRatio: 40 },
+        { enabled: true, leftPaneRatio: 25, allowStudentResize: true, paneRatioCustomized: false },
+      )).toBe(40);
+    });
+
+    test('paneRatioCustomized false falls back to system default when tutorial invalid', () => {
+      expect(resolveEffectivePaneRatio(
+        { leftPaneRatio: 99 },
+        { enabled: true, leftPaneRatio: 25, paneRatioCustomized: false },
+      )).toBe(LAYOUT_DEFAULT_LEFT_RATIO);
+    });
+
     test('ignores slide override when enabled is false', () => {
       expect(resolveEffectivePaneRatio(
         { leftPaneRatio: 40 },

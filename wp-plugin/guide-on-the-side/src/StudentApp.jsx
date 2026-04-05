@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import PdfPaneEmbed from "./components/PdfPaneEmbed";
 import { recordAnalyticsEvent } from "./services/analyticsApi";
 import { issueCertificate, downloadCertificate, requestCompletionProof } from "./services/certificateApi";
 import { isTextAnswerCorrect } from "./services/slideValidation";
@@ -9,6 +10,7 @@ import {
   evaluateBranchMatch,
   getFirstSlideId,
   getNextSlideId,
+  buildInitialHistoryStackForSlide,
 } from "./services/branchHelpers";
 import {
   resolveEffectiveTokens,
@@ -16,7 +18,21 @@ import {
   tokensToShellStyle,
   tokensToButtonStyle,
   tokensToProgressBarStyle,
+  LAYOUT_MIN_LEFT_RATIO,
+  LAYOUT_MAX_LEFT_RATIO,
 } from "./services/themeHelpers";
+
+function isPdfMediaData(data) {
+  if (!data?.url) return false;
+  if (data.mediaType === "pdf") return true;
+  const m = String(data.mimeType || "").toLowerCase();
+  if (m === "application/pdf" || m === "application/x-pdf") return true;
+  const url = String(data.url).toLowerCase();
+  if (url.includes(".pdf")) return true;
+  const names = `${data.filename || ""} ${data.originalName || ""}`.toLowerCase();
+  if (names.includes(".pdf")) return true;
+  return false;
+}
 
 /**
  * Get student configuration from WordPress
@@ -31,6 +47,7 @@ function getConfig() {
     homeUrl: "/",
     siteName: "Site",
     userName: "Guest",
+    startSlideId: null,
   };
 }
 
@@ -81,6 +98,10 @@ export default function StudentApp() {
   const [certLoading, setCertLoading]         = useState(false);
   const [certError, setCertError]             = useState(null);
   const [certDownloadUrl, setCertDownloadUrl] = useState(null);
+  // Optional override of left-pane width % while viewing (session only; not saved).
+  const [studentPaneRatioOverride, setStudentPaneRatioOverride] = useState(null);
+  // When the slide allows it, learner must opt in before the range control is shown.
+  const [studentPaneResizeExpanded, setStudentPaneResizeExpanded] = useState(false);
   // Stable idempotency key per completion attempt — shared across retries so the
   // server can dedupe rapid double-clicks.  Reset when the recipient name changes
   // because that constitutes a new logical issuance attempt.
@@ -114,6 +135,18 @@ export default function StudentApp() {
     tutorial?.layoutSettings ?? null,
     currentSlide?.layoutOverride ?? null,
   );
+
+  const slideAllowsStudentPaneResize = currentSlide?.layoutOverride?.allowStudentResize === true;
+
+  const displayPaneRatio = (() => {
+    if (!slideAllowsStudentPaneResize) {
+      return effectivePaneRatio;
+    }
+    if (studentPaneRatioOverride !== null && studentPaneRatioOverride !== undefined) {
+      return Math.min(LAYOUT_MAX_LEFT_RATIO, Math.max(LAYOUT_MIN_LEFT_RATIO, studentPaneRatioOverride));
+    }
+    return effectivePaneRatio;
+  })();
 
   //progress bar indicator 
   //show progress within regular slides only; branch slides share the root's position
@@ -165,9 +198,12 @@ export default function StudentApp() {
           data.slides.sort((a, b) => (a.order || 0) - (b.order || 0));
         }
         setTutorial(data);
-        // Initialize to the first regular slide
-        const firstId = getFirstSlideId(data.slides || []);
-        setCurrentSlideId(firstId);
+        const slides = data.slides || [];
+        const requested = config.startSlideId;
+        const startValid = requested && slides.some((s) => s.slideId === requested);
+        const startId = startValid ? requested : getFirstSlideId(slides);
+        setCurrentSlideId(startId);
+        setHistoryStack(buildInitialHistoryStackForSlide(slides, startId));
       } catch (err) {
         setError(err.message);
       } finally {
@@ -176,7 +212,17 @@ export default function StudentApp() {
     }
 
     loadTutorial();
+  }, [config.tutorialId, config.startSlideId]);
+
+  useEffect(() => {
+    setStudentPaneRatioOverride(null);
+    setStudentPaneResizeExpanded(false);
   }, [config.tutorialId]);
+
+  useEffect(() => {
+    setStudentPaneRatioOverride(null);
+    setStudentPaneResizeExpanded(false);
+  }, [currentSlideId]);
 
   // Prefill recipient name from WP user display name (logged-in users only)
   useEffect(() => {
@@ -530,20 +576,21 @@ export default function StudentApp() {
           <button
             onClick={() => {
               setCompleted(false);
-              setHistoryStack([]);
-              setCurrentSlideId(getFirstSlideId(allSlides));
+              const slides = allSlides;
+              const startId = getFirstSlideId(slides);
+              setCurrentSlideId(startId);
+              setHistoryStack(buildInitialHistoryStackForSlide(slides, startId));
               setAnswers({});
               setFeedback({});
               setCertDownloadUrl(null);
               setCertError(null);
+              setStudentPaneRatioOverride(null);
+              setStudentPaneResizeExpanded(false);
             }}
             style={styles.restartButton}
           >
             Restart Tutorial
           </button>
-          <a href={config.homeUrl} style={styles.homeLink}>
-            Return to Home
-          </a>
         </div>
       </div>
     );
@@ -587,11 +634,61 @@ export default function StudentApp() {
               {currentSlide.title || `Slide ${progressInfo.current}`}
             </h2>
 
+            {slideAllowsStudentPaneResize ? (
+              <div className="gots-pane-ratio-toolbar">
+                <label style={styles.paneRatioToggleRow}>
+                  <input
+                    type="checkbox"
+                    checked={studentPaneResizeExpanded}
+                    onChange={(e) => {
+                      const on = e.target.checked;
+                      setStudentPaneResizeExpanded(on);
+                      if (!on) setStudentPaneRatioOverride(null);
+                    }}
+                    style={styles.paneRatioToggleInput}
+                  />
+                  <span>Adjust left / right pane width</span>
+                </label>
+                {studentPaneResizeExpanded ? (
+                  <div className="gots-pane-ratio-slider-row">
+                    <input
+                      id="gots-pane-ratio-slider"
+                      type="range"
+                      min={LAYOUT_MIN_LEFT_RATIO}
+                      max={LAYOUT_MAX_LEFT_RATIO}
+                      value={displayPaneRatio}
+                      onChange={(e) => setStudentPaneRatioOverride(Number(e.target.value))}
+                      style={{
+                        ...styles.paneRatioRange,
+                        accentColor: effectiveTokens.primaryColor || "#7B2D26",
+                      }}
+                      aria-valuemin={LAYOUT_MIN_LEFT_RATIO}
+                      aria-valuemax={LAYOUT_MAX_LEFT_RATIO}
+                      aria-valuenow={displayPaneRatio}
+                      aria-valuetext={`Left ${displayPaneRatio} percent, right ${100 - displayPaneRatio} percent`}
+                    />
+                    <span style={styles.paneRatioReadout}>
+                      Left {displayPaneRatio}% · Right {100 - displayPaneRatio}%
+                    </span>
+                    {studentPaneRatioOverride !== null ? (
+                      <button
+                        type="button"
+                        onClick={() => setStudentPaneRatioOverride(null)}
+                        style={styles.paneRatioReset}
+                      >
+                        Reset to default
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <div
               className="gots-panes-grid"
               style={{
                 ...styles.panesContainer,
-                gridTemplateColumns: `${effectivePaneRatio}% ${100 - effectivePaneRatio}%`,
+                gridTemplateColumns: `${displayPaneRatio}% ${100 - displayPaneRatio}%`,
               }}
             >
               {/* Left Pane */}
@@ -771,7 +868,49 @@ export default function StudentApp() {
         </div>
       );
     }
-    return <div style={styles.emptyPane}>Unsupported media type</div>;
+    if (data.mediaType === "audio" || String(data.mimeType || "").toLowerCase().startsWith("audio/")) {
+      return (
+        <div style={styles.mediaContainer}>
+          <audio src={data.url} controls style={styles.mediaAudio}>
+            Your browser does not support audio playback.
+          </audio>
+        </div>
+      );
+    }
+    if (isPdfMediaData(data)) {
+      const pdfTitle = data.altText || data.originalName || data.filename || "PDF document";
+      return (
+        <div style={styles.mediaContainer}>
+          <PdfPaneEmbed url={data.url} title={pdfTitle} compact={false} />
+          <div style={styles.mediaFileActions}>
+            <a
+              href={data.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={styles.embedFallbackLink}
+            >
+              Open PDF in new tab
+            </a>
+          </div>
+        </div>
+      );
+    }
+    const fileLabel = data.originalName || data.filename || "Attached file";
+    return (
+      <div style={styles.mediaContainer}>
+        <div style={styles.mediaFileCard}>
+          <p style={styles.mediaFileName}>{fileLabel}</p>
+          <a
+            href={data.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={styles.mediaFileOpenLink}
+          >
+            Open or download
+          </a>
+        </div>
+      </div>
+    );
   }
 
   function renderEmbed(data) {
@@ -954,16 +1093,6 @@ const styles = {
     borderRadius: "8px",
     cursor: "pointer",
   },
-  homeLink: {
-    padding: "12px 24px",
-    fontSize: "16px",
-    fontWeight: "600",
-    backgroundColor: "white",
-    color: "#374151",
-    border: "1px solid #d1d5db",
-    borderRadius: "8px",
-    textDecoration: "none",
-  },
   container: {
     display: "flex",
     flexDirection: "column",
@@ -1022,6 +1151,45 @@ const styles = {
     fontWeight: "600",
     color: "#111827",
     marginBottom: "24px",
+  },
+  paneRatioToggleRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    fontSize: "14px",
+    fontWeight: "500",
+    color: "#374151",
+    cursor: "pointer",
+    userSelect: "none",
+  },
+  paneRatioToggleInput: {
+    width: "18px",
+    height: "18px",
+    accentColor: "#7B2D26",
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  paneRatioRange: {
+    flex: "1 1 140px",
+    minWidth: "120px",
+    maxWidth: "320px",
+    height: "8px",
+    cursor: "pointer",
+  },
+  paneRatioReadout: {
+    fontSize: "13px",
+    color: "#6b7280",
+    whiteSpace: "nowrap",
+  },
+  paneRatioReset: {
+    fontSize: "13px",
+    fontWeight: "500",
+    color: "#7B2D26",
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    textDecoration: "underline",
+    padding: 0,
   },
   panesContainer: {
     display: "grid",
@@ -1108,6 +1276,40 @@ const styles = {
     width: "100%",
     maxHeight: "400px",
     borderRadius: "8px",
+  },
+  mediaAudio: {
+    display: "block",
+    width: "100%",
+    marginTop: "8px",
+  },
+  mediaFileActions: {
+    display: "flex",
+    justifyContent: "center",
+    paddingTop: "10px",
+  },
+  mediaFileCard: {
+    padding: "20px",
+    border: "1px solid #e5e7eb",
+    borderRadius: "8px",
+    backgroundColor: "#f9fafb",
+    textAlign: "center",
+  },
+  mediaFileName: {
+    margin: "0 0 12px 0",
+    fontSize: "15px",
+    fontWeight: "600",
+    color: "#111827",
+    wordBreak: "break-word",
+  },
+  mediaFileOpenLink: {
+    display: "inline-block",
+    padding: "10px 18px",
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#fff",
+    backgroundColor: "#7B2D26",
+    borderRadius: "8px",
+    textDecoration: "none",
   },
   embedContainer: {
     display: "flex",

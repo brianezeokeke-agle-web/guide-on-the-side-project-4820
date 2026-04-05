@@ -273,6 +273,17 @@ function gots_render_playback_page($tutorial_id, $post, $is_preview = false) {
             $config['currentUserName'] = '';
             $config['isLoggedIn']      = false;
         }
+
+        // Admin preview only: optional start slide (?slide=uuid).
+        if ($is_preview && current_user_can('edit_posts')) {
+            if (isset($_GET['slide'])) {
+                $raw_slide = sanitize_text_field(wp_unslash($_GET['slide']));
+                // slideId values are UUIDs from gots_generate_uuid()
+                if (preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $raw_slide)) {
+                    $config['startSlideId'] = $raw_slide;
+                }
+            }
+        }
         ?>
         <script>
             window.gotsStudentConfig = <?php echo wp_json_encode($config); ?>;

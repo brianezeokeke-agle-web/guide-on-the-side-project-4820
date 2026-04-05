@@ -55,7 +55,6 @@ export default function Sidebar() {
       >
         Verify certificate ID
       </Link>
-      <div style={styles.navItem}>Settings</div>
 
       <div style={{ flexGrow: 1 }} />
     </aside>
@@ -72,15 +71,6 @@ const styles = {
     flexDirection: "column",
     gap: "4px",
     fontFamily: "system-ui, -apple-system, sans-serif",
-  },
-  navItem: {
-    cursor: "pointer",
-    padding: "8px 12px",
-    borderRadius: "6px",
-    fontSize: "14px",
-    fontWeight: "500",
-    color: "#374151",
-    transition: "background-color 0.15s ease",
   },
   navLink: {
     cursor: "pointer",

@@ -114,11 +114,27 @@ export const LAYOUT_MAX_LEFT_RATIO = 50;
  * Always returns an integer in [10, 50].
  *
  * @param {object|null} tutorialLayoutSettings  e.g. { leftPaneRatio: 35 } from tutorial API
- * @param {object|null} slideLayoutOverride     e.g. { enabled: true, leftPaneRatio: 40 } from slide
+ * @param {object|null} slideLayoutOverride     e.g. { enabled: true, leftPaneRatio: 40, allowStudentResize?: true, paneRatioCustomized?: false } from slide
  * @returns {number}
  */
 export function resolveEffectivePaneRatio(tutorialLayoutSettings, slideLayoutOverride) {
-  // 1. Slide-level override takes highest priority
+  // Slide record exists but does not pin a custom ratio (e.g. student-resize-only) — use tutorial / system default
+  if (
+    slideLayoutOverride &&
+    slideLayoutOverride.enabled === true &&
+    slideLayoutOverride.paneRatioCustomized === false
+  ) {
+    if (
+      tutorialLayoutSettings &&
+      typeof tutorialLayoutSettings.leftPaneRatio === "number"
+    ) {
+      const r = tutorialLayoutSettings.leftPaneRatio;
+      if (r >= 10 && r <= 50) return r;
+    }
+    return LAYOUT_DEFAULT_LEFT_RATIO;
+  }
+
+  // 1. Slide-level custom ratio
   if (
     slideLayoutOverride &&
     slideLayoutOverride.enabled === true &&

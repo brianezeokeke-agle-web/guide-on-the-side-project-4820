@@ -538,7 +538,7 @@ function gots_rest_get_tutorial($request) {
         );
     }
     
-    return rest_ensure_response(gots_format_tutorial_response($post));
+    return rest_ensure_response(gots_format_tutorial_response($post, true));
 }
 
 /**
@@ -590,7 +590,7 @@ function gots_rest_get_tutorial_public($request) {
     // Resolve and embed the effective theme config here only — this is the one
     // endpoint that needs it. Keeping it out of gots_format_tutorial_response()
     // avoids an extra theme-table lookup on every admin list/detail call.
-    $data = gots_format_tutorial_response($post);
+    $data = gots_format_tutorial_response($post, true);
     $resolved_theme          = gots_resolve_tutorial_theme($post->ID);
     $data['theme_config']    = isset($resolved_theme->config_json) ? $resolved_theme->config_json : null;
     $data['layoutSettings']  = gots_get_tutorial_layout_settings($post->ID);
@@ -674,7 +674,7 @@ function gots_rest_create_tutorial($request) {
     // get the created post and return the formatted response
     $post = get_post($post_id);
     
-    return rest_ensure_response(gots_format_tutorial_response($post));
+    return rest_ensure_response(gots_format_tutorial_response($post, true));
 }
 
 /**
@@ -928,7 +928,7 @@ function gots_rest_update_tutorial($request) {
     // get the updated post and return the formatted response
     $updated_post = get_post($id);
     
-    return rest_ensure_response(gots_format_tutorial_response($updated_post));
+    return rest_ensure_response(gots_format_tutorial_response($updated_post, true));
 }
 
 /**
@@ -1081,7 +1081,7 @@ function gots_rest_duplicate_tutorial($request) {
     // get the created post and return the formatted response
     $new_post = get_post($new_post_id);
 
-    return rest_ensure_response(gots_format_tutorial_response($new_post));
+    return rest_ensure_response(gots_format_tutorial_response($new_post, true));
 }
 
 /**
@@ -1448,7 +1448,8 @@ function gots_rest_download_certificate($request) {
  * GET /certificates/verify/{verification_id}
  *
  * Public verification by the Certificate ID (UUID) printed on the PDF.
- * Does not expose the recipient name.
+ * Anonymous callers see validity, tutorial title, issue time, and status only.
+ * Logged-in users with edit_posts (e.g. librarians in wp-admin) also receive recipient_name.
  *
  * @param WP_REST_Request $request
  * @return WP_REST_Response
@@ -1471,11 +1472,19 @@ function gots_rest_verify_certificate($request) {
         return rest_ensure_response(array('valid' => false));
     }
 
-    return rest_ensure_response(array(
-        'valid'          => true,
-        'issued_at'      => $row->issued_at,
-        'tutorial_title' => get_the_title((int) $row->tutorial_id),
-    ));
+    $payload = array(
+        'valid'            => true,
+        'issued_at'        => $row->issued_at,
+        'tutorial_title'   => get_the_title((int) $row->tutorial_id),
+        'status'           => $row->status,
+        'certificate_id'   => $vid,
+    );
+
+    if (is_user_logged_in() && current_user_can('edit_posts')) {
+        $payload['recipient_name'] = $row->recipient_name;
+    }
+
+    return rest_ensure_response($payload);
 }
 
 // ── Admin certificate template REST callbacks ──────────────────────────────────
@@ -1774,13 +1783,9 @@ function gots_rest_update_tutorial_theme_settings($request) {
     // Sanitize and validate theme_id
     $theme_id = isset($params['themeId']) ? absint($params['themeId']) : 0;
 
-    // If a non-zero theme_id is supplied, verify it exists and is active
+    // Stale UI can still send a deleted theme id; clear the assignment instead of blocking save.
     if ($theme_id > 0 && !gots_get_theme($theme_id)) {
-        return new WP_Error(
-            'invalid_theme',
-            'The selected theme does not exist or has been deactivated.',
-            array('status' => 400)
-        );
+        $theme_id = 0;
     }
 
     gots_save_tutorial_theme_settings($tutorial_id, array('theme_id' => $theme_id ?: null));

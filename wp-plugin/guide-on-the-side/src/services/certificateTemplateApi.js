@@ -112,11 +112,12 @@ export async function listTutorialCertificates(tutorialId, limit = 50, offset = 
 }
 
 /**
- * Look up a certificate by the Certificate ID printed on the PDF (public endpoint).
- * Does not return the student name.
+ * Look up a certificate by the Certificate ID printed on the PDF.
+ * When called from wp-admin with gotsConfig.nonce, WordPress treats the user as logged in
+ * and the API includes recipient_name for users who can edit_posts.
  *
  * @param {string} verificationId
- * @returns {Promise<{ valid: false } | { valid: true, issued_at: string, tutorial_title: string, status: string }>}
+ * @returns {Promise<object>} valid, issued_at, tutorial_title, status; optional recipient_name
  */
 export async function verifyCertificateById(verificationId) {
   const config = getConfig();
@@ -126,7 +127,9 @@ export async function verifyCertificateById(verificationId) {
   }
   const id = encodeURIComponent(raw);
   const url = `${config.baseUrl}/certificates/verify/${id}`;
-  const response = await fetch(url, { credentials: 'same-origin' });
+  const headers = {};
+  if (config.nonce) headers['X-WP-Nonce'] = config.nonce;
+  const response = await fetch(url, { credentials: 'same-origin', headers });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
     throw new Error(err.message || `Verification failed (${response.status})`);

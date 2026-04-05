@@ -542,8 +542,19 @@ function gots_get_builtin_fallback_theme() {
  */
 function gots_get_tutorial_theme_settings($tutorial_id) {
     $raw = (int) get_post_meta($tutorial_id, '_gots_theme_id', true);
+    if ($raw < 1) {
+        return array(
+            'theme_id' => null,
+        );
+    }
+    // Soft-deleted or missing themes leave stale post meta; expose as unset so the editor can save.
+    if (!gots_get_theme($raw)) {
+        return array(
+            'theme_id' => null,
+        );
+    }
     return array(
-        'theme_id' => $raw > 0 ? $raw : null,
+        'theme_id' => $raw,
     );
 }
 

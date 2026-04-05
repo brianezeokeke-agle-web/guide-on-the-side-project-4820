@@ -11,7 +11,7 @@
  * @param {string} options.title - Modal title
  * @param {string} options.buttonText - Select button text
  * @param {boolean} options.multiple - Allow multiple selections
- * @param {string} options.type - Media type filter ('image', 'video', or empty for all)
+ * @param {string} options.type - Media type filter ('image', 'video', 'audio', or '' for all types)
  * @returns {Promise<Object|Array|null>} Selected media object(s) or null if cancelled
  */
 export function openMediaLibrary(options = {}) {
@@ -80,27 +80,44 @@ export function openMediaLibrary(options = {}) {
  * @returns {Object} Formatted media data
  */
 function formatAttachment(attachment) {
-  // Determine media type
-  let mediaType = null;
-  if (attachment.type === 'image') {
+  const mime = String(attachment.mime || '').toLowerCase();
+  const wpType = attachment.type || '';
+  const fname = String(attachment.filename || attachment.url || '').toLowerCase();
+  const titleLower = String(attachment.title || '').toLowerCase();
+  const urlLower = String(attachment.url || '').toLowerCase();
+
+  let mediaType = 'file';
+  if (wpType === 'image' || mime.startsWith('image/')) {
     mediaType = 'image';
-  } else if (attachment.type === 'video') {
+  } else if (wpType === 'video' || mime.startsWith('video/')) {
     mediaType = 'video';
+  } else if (wpType === 'audio' || mime.startsWith('audio/')) {
+    mediaType = 'audio';
+  } else if (
+    mime === 'application/pdf' ||
+    mime === 'application/x-pdf' ||
+    fname.endsWith('.pdf') ||
+    titleLower.endsWith('.pdf') ||
+    titleLower.includes('.pdf') ||
+    urlLower.includes('.pdf')
+  ) {
+    mediaType = 'pdf';
   }
 
   // Get the appropriate URL (prefer full size for images)
   let url = attachment.url;
-  if (attachment.sizes && attachment.sizes.full) {
+  if (mediaType === 'image' && attachment.sizes && attachment.sizes.full) {
     url = attachment.sizes.full.url;
   }
 
   return {
-    mediaType: mediaType,
-    url: url,
+    mediaType,
+    url: url || '',
     attachmentId: attachment.id,
     altText: attachment.alt || attachment.title || '',
     filename: attachment.filename || '',
     originalName: attachment.title || attachment.filename || '',
+    mimeType: attachment.mime || '',
   };
 }
 
@@ -134,9 +151,9 @@ export function selectVideo() {
  */
 export function selectMedia() {
   return openMediaLibrary({
-    title: 'Select Image or Video',
-    buttonText: 'Select',
-    type: '', // Allow both images and videos
+    title: 'Select media file',
+    buttonText: 'Use this file',
+    type: '', // Images, video, audio, PDF, and other allowed WP upload types
   });
 }
 

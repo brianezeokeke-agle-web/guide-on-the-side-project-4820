@@ -2,6 +2,7 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import DOMPurify from "dompurify";
 import { getTutorial, updateTutorial } from "../services/tutorialApi";
+import PdfPaneEmbed from "../components/PdfPaneEmbed";
 import { selectMedia, isMediaLibraryAvailable } from "../services/mediaLibrary";
 import {
   getTutorialCertSettings,
@@ -22,6 +23,7 @@ import {
   LAYOUT_DEFAULT_LEFT_RATIO,
   LAYOUT_MIN_LEFT_RATIO,
   LAYOUT_MAX_LEFT_RATIO,
+  resolveEffectivePaneRatio,
 } from "../services/themeHelpers";
 import {
   buildBranchChildrenMap,
@@ -683,6 +685,9 @@ function MediaUploadEditor({ data, onChange, onBlur, readOnly = false }) {
     url: "",
     attachmentId: null,
     altText: "",
+    filename: "",
+    originalName: "",
+    mimeType: "",
   };
 
   // Check if we have uploaded media
@@ -707,6 +712,9 @@ function MediaUploadEditor({ data, onChange, onBlur, readOnly = false }) {
           url: selected.url,
           attachmentId: selected.attachmentId,
           altText: selected.altText || mediaData.altText || "",
+          filename: selected.filename || "",
+          originalName: selected.originalName || selected.filename || "",
+          mimeType: selected.mimeType || "",
         };
         
         // Pass true to persist immediately after selection
@@ -727,6 +735,9 @@ function MediaUploadEditor({ data, onChange, onBlur, readOnly = false }) {
       url: "",
       attachmentId: null,
       altText: "",
+      filename: "",
+      originalName: "",
+      mimeType: "",
     };
     // Pass true to persist immediately after removal
     onChange(newData, true);
@@ -749,9 +760,9 @@ function MediaUploadEditor({ data, onChange, onBlur, readOnly = false }) {
           <div style={styles.uploadLabel}>
             <span style={styles.uploadIcon}>📁</span>
             <span>{readOnly ? 'No media selected' : 'Click to select from Media Library'}</span>
-            <span style={styles.uploadHint}>Images: JPEG, PNG, GIF, WebP</span>
-            <span style={styles.uploadHint}>Videos: MP4, WebM, MOV</span>
-            <span style={styles.uploadHint}>(Limit: 1 file per pane)</span>
+            <span style={styles.uploadHint}>Images, video, audio</span>
+            <span style={styles.uploadHint}>PDF, Word, PowerPoint, and other types allowed by WordPress</span>
+            <span style={styles.uploadHint}>(Limit: 1 file per pane — upload in Media Library first if needed)</span>
           </div>
         </div>
       ) : (
@@ -775,12 +786,24 @@ function MediaUploadEditor({ data, onChange, onBlur, readOnly = false }) {
               controls
               style={styles.mediaVideo}
             />
+          ) : mediaData.mediaType === "audio" ? (
+            <audio src={mediaData.url} controls style={styles.mediaAudio}>
+              Audio not supported in this browser.
+            </audio>
+          ) : mediaData.mediaType === "pdf" ? (
+            <PdfPaneEmbed
+              url={mediaData.url}
+              title={mediaData.altText || mediaData.originalName || "PDF document"}
+              compact
+            />
           ) : (
-            // Fallback for unknown media type with URL
-            <div style={styles.mediaFallback}>
-              <span>📎 Media file attached</span>
+            <div style={styles.mediaFileCard}>
+              <span style={styles.mediaFileTitle}>📎 {mediaData.originalName || mediaData.filename || "Attached file"}</span>
+              <p style={styles.mediaFileHint}>
+                Students will see a download / open link. Office documents usually open in the browser or app.
+              </p>
               <a href={mediaData.url} target="_blank" rel="noopener noreferrer" style={styles.mediaLink}>
-                View file
+                Open file
               </a>
             </div>
           )}
@@ -800,19 +823,23 @@ function MediaUploadEditor({ data, onChange, onBlur, readOnly = false }) {
             )}
           </div>
 
-          {/* Alt text input */}
-          <div style={styles.altTextRow}>
-            <label style={styles.altTextLabel}>Alt Text (optional):</label>
-            <input
-              type="text"
-              style={{ ...styles.altTextInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
-              value={mediaData.altText || ""}
-              onChange={readOnly ? undefined : (e) => updateAltText(e.target.value)}
-              onBlur={readOnly ? undefined : onBlur}
-              readOnly={readOnly}
-              placeholder="Describe the media for accessibility..."
-            />
-          </div>
+          {/* Alt text — mainly for images; reused as PDF iframe title */}
+          {(mediaData.mediaType === "image" || mediaData.mediaType === "pdf") && (
+            <div style={styles.altTextRow}>
+              <label style={styles.altTextLabel}>
+                {mediaData.mediaType === "image" ? "Alt text (optional):" : "Short title (optional, for accessibility):"}
+              </label>
+              <input
+                type="text"
+                style={{ ...styles.altTextInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
+                value={mediaData.altText || ""}
+                onChange={readOnly ? undefined : (e) => updateAltText(e.target.value)}
+                onBlur={readOnly ? undefined : onBlur}
+                readOnly={readOnly}
+                placeholder={mediaData.mediaType === "image" ? "Describe the image for screen readers…" : "e.g. Syllabus PDF"}
+              />
+            </div>
+          )}
 
           {/* Replace media button */}
           {!readOnly && (
@@ -833,26 +860,109 @@ function MediaUploadEditor({ data, onChange, onBlur, readOnly = false }) {
 
 // BranchConfigEditor
 // Collapsible "Configurations" section rendered inside the active slide editor
-function BranchConfigEditor({ slide, allSlides, isPublished, onSlidePatch, onBlur }) {
+function BranchConfigEditor({ slide, allSlides, isPublished, tutorialLayoutSettings, onSlidePatch, onBlur }) {
   const [expanded, setExpanded] = useState(false);
 
   //Theme override state
   const patchTimerRef  = useRef(null);
   const override       = slide.themeOverride || { enabled: false, tokens: {} };
   const themeEnabled   = override.enabled === true;
-  //Layout override state
-  const layoutOverride        = slide.layoutOverride || null;
-  const layoutOverrideEnabled = layoutOverride?.enabled === true;
-  const layoutRatio = (layoutOverrideEnabled && typeof layoutOverride.leftPaneRatio === "number")
-    ? layoutOverride.leftPaneRatio
-    : LAYOUT_DEFAULT_LEFT_RATIO;
+  // Layout: optional custom ratio, optional student resize — independent toggles
+  const layoutOverride = slide.layoutOverride || null;
+  const hasLayoutOverride = layoutOverride?.enabled === true;
+  const layoutAllowStudentResize = layoutOverride?.allowStudentResize === true;
+  const paneRatioCustomized = layoutOverride?.paneRatioCustomized !== false;
+  const customPaneRatioEnabled = hasLayoutOverride && paneRatioCustomized;
+  const layoutRatio =
+    customPaneRatioEnabled && typeof layoutOverride.leftPaneRatio === "number"
+      ? layoutOverride.leftPaneRatio
+      : LAYOUT_DEFAULT_LEFT_RATIO;
 
-  const handleToggleLayoutOverride = (checked) => {
-    onSlidePatch({ layoutOverride: checked ? { enabled: true, leftPaneRatio: LAYOUT_DEFAULT_LEFT_RATIO } : null });
+  const buildSlideLayoutOverride = ({ leftPaneRatio, allowStudentResize, paneRatioCustomized: customized }) => {
+    const o = { enabled: true, leftPaneRatio };
+    if (allowStudentResize) o.allowStudentResize = true;
+    if (customized === false) o.paneRatioCustomized = false;
+    return o;
   };
+
+  const tutorialRatioHint = resolveEffectivePaneRatio(tutorialLayoutSettings ?? null, null);
+
+  const handleToggleCustomPaneRatio = (checked) => {
+    if (checked) {
+      const seed = resolveEffectivePaneRatio(
+        tutorialLayoutSettings ?? null,
+        hasLayoutOverride && !paneRatioCustomized ? layoutOverride : null,
+      );
+      const n = Math.min(
+        LAYOUT_MAX_LEFT_RATIO,
+        Math.max(LAYOUT_MIN_LEFT_RATIO, seed),
+      );
+      onSlidePatch({
+        layoutOverride: buildSlideLayoutOverride({
+          leftPaneRatio: n,
+          allowStudentResize: layoutAllowStudentResize,
+          paneRatioCustomized: true,
+        }),
+      });
+    } else if (layoutAllowStudentResize) {
+      const base = resolveEffectivePaneRatio(tutorialLayoutSettings ?? null, null);
+      onSlidePatch({
+        layoutOverride: buildSlideLayoutOverride({
+          leftPaneRatio: base,
+          allowStudentResize: true,
+          paneRatioCustomized: false,
+        }),
+      });
+    } else {
+      onSlidePatch({ layoutOverride: null });
+    }
+  };
+
   const handleSetLayoutRatio = (raw) => {
-    const n = Math.min(LAYOUT_MAX_LEFT_RATIO, Math.max(LAYOUT_MIN_LEFT_RATIO, parseInt(raw, 10) || LAYOUT_DEFAULT_LEFT_RATIO));
-    onSlidePatch({ layoutOverride: { enabled: true, leftPaneRatio: n } });
+    const n = Math.min(
+      LAYOUT_MAX_LEFT_RATIO,
+      Math.max(LAYOUT_MIN_LEFT_RATIO, parseInt(raw, 10) || LAYOUT_DEFAULT_LEFT_RATIO),
+    );
+    onSlidePatch({
+      layoutOverride: buildSlideLayoutOverride({
+        leftPaneRatio: n,
+        allowStudentResize: layoutAllowStudentResize,
+        paneRatioCustomized: true,
+      }),
+    });
+  };
+
+  const handleToggleAllowStudentResize = (checked) => {
+    if (checked) {
+      if (customPaneRatioEnabled) {
+        onSlidePatch({
+          layoutOverride: buildSlideLayoutOverride({
+            leftPaneRatio: layoutRatio,
+            allowStudentResize: true,
+            paneRatioCustomized: true,
+          }),
+        });
+      } else {
+        const base = resolveEffectivePaneRatio(tutorialLayoutSettings ?? null, null);
+        onSlidePatch({
+          layoutOverride: buildSlideLayoutOverride({
+            leftPaneRatio: base,
+            allowStudentResize: true,
+            paneRatioCustomized: false,
+          }),
+        });
+      }
+    } else if (customPaneRatioEnabled) {
+      onSlidePatch({
+        layoutOverride: buildSlideLayoutOverride({
+          leftPaneRatio: layoutRatio,
+          allowStudentResize: false,
+          paneRatioCustomized: true,
+        }),
+      });
+    } else {
+      onSlidePatch({ layoutOverride: null });
+    }
   };
   const propTokens     = override.tokens || {};
   const [draftTokens, setDraftTokens] = useState(propTokens);
@@ -1173,22 +1283,22 @@ function BranchConfigEditor({ slide, allSlides, isPublished, onSlidePatch, onBlu
             )}
           </div>
 
-          {/* ── Layout Override ── */}
+          {/* ── Layout: custom pane ratio ── */}
           <div style={{ borderTop: "1px solid #e5e7eb", marginTop: "12px", paddingTop: "12px" }}>
             <label style={styles.branchCheckboxLabel}>
               <input
                 type="checkbox"
-                checked={layoutOverrideEnabled}
+                checked={customPaneRatioEnabled}
                 disabled={isPublished}
-                onChange={(e) => handleToggleLayoutOverride(e.target.checked)}
+                onChange={(e) => handleToggleCustomPaneRatio(e.target.checked)}
                 style={{ marginRight: "8px", cursor: isPublished ? "default" : "pointer" }}
               />
               Override pane ratio for this slide
             </label>
             <p style={{ fontSize: "12px", color: "#9ca3af", margin: "4px 0 0 0" }}>
-              Overrides the tutorial-wide pane ratio for this slide only.
+              Fix a left/right width split for this slide instead of using the tutorial default ({tutorialRatioHint}% left).
             </p>
-            {layoutOverrideEnabled && (
+            {customPaneRatioEnabled && (
               <div style={{ marginTop: "10px" }}>
                 <label style={{ display: "block", fontSize: "12px", fontWeight: "500", color: "#374151", marginBottom: "4px" }}>
                   Left pane width
@@ -1208,6 +1318,25 @@ function BranchConfigEditor({ slide, allSlides, isPublished, onSlidePatch, onBlu
                 </p>
               </div>
             )}
+          </div>
+
+          {/* ── Student pane resize (always listed like other options) ── */}
+          <div style={{ borderTop: "1px solid #e5e7eb", marginTop: "12px", paddingTop: "12px" }}>
+            <label style={styles.branchCheckboxLabel}>
+              <input
+                type="checkbox"
+                checked={layoutAllowStudentResize}
+                disabled={isPublished}
+                onChange={(e) => handleToggleAllowStudentResize(e.target.checked)}
+                style={{ marginRight: "8px", cursor: isPublished ? "default" : "pointer" }}
+              />
+              Allow students to resize slide
+            </label>
+            <p style={{ fontSize: "12px", color: "#9ca3af", margin: "4px 0 0 28px" }}>
+              {customPaneRatioEnabled
+                ? "During playback, learners can opt in to adjust the split. The override slider is their default until they change it."
+                : `During playback, learners can opt in to adjust the split. Default follows the tutorial layout (${tutorialRatioHint}% left) until they change it.`}
+            </p>
           </div>
         </div>
       )}
@@ -1255,7 +1384,7 @@ export default function TutorialEditorPage() {
         const data = await getTutorial(id);
         // Update both state AND ref
         setTutorial(data);
-        tutorialRef.current = data; // IMPORTANT: Sync ref on initial load
+        tutorialRef.current = data;
         // set first slide as active by default
         if (data.slides && data.slides.length > 0) {
           setActiveSlideId(data.slides[0].slideId);
@@ -1281,7 +1410,15 @@ export default function TutorialEditorPage() {
     ]).then(([settings, templates, themeSettingsData, themes, layoutSettingsData]) => {
       if (settings) setCertSettings(settings);
       if (templates) setCertTemplates(templates);
-      if (themeSettingsData) setThemeSettings(themeSettingsData);
+      if (themeSettingsData) {
+        const tid = themeSettingsData.theme_id;
+        const list = Array.isArray(themes) ? themes : [];
+        if (tid != null && Number(tid) > 0 && list.length > 0 && !list.some((t) => Number(t.id) === Number(tid))) {
+          setThemeSettings({ theme_id: null });
+        } else {
+          setThemeSettings(themeSettingsData);
+        }
+      }
       if (themes) setAvailableThemes(themes);
       if (layoutSettingsData) setLayoutSettings(layoutSettingsData);
     });
@@ -1289,6 +1426,7 @@ export default function TutorialEditorPage() {
 
   // get the active slide object
   const activeSlide = tutorial?.slides?.find((s) => s.slideId === activeSlideId);
+  const isPublished = tutorial?.status === "published";
 
   // Use a ref to always have access to the latest tutorial state
   const tutorialRef = useRef(tutorial);
@@ -1464,6 +1602,9 @@ export default function TutorialEditorPage() {
           url: "",
           attachmentId: null,
           altText: "",
+          filename: "",
+          originalName: "",
+          mimeType: "",
         },
       };
     }
@@ -1735,7 +1876,7 @@ export default function TutorialEditorPage() {
     return map;
   }, [tutorial?.slides]);
 
-  //we will meoize here, so tutorials with many slides still maintain low latency/
+  // Memoized so validation stays cheap for tutorials with many slides.
   // check if a slide is valid using the memoized map
   const isSlideValid = (slide) => (validationMap[slide?.slideId] || []).length === 0;
 
@@ -1871,7 +2012,7 @@ export default function TutorialEditorPage() {
       embed: "Embed",
       question: "Question (MCQ)",
       textQuestion: "Question (Text)",
-      media: "Media (Image/Video)",
+      media: "Media (image, video, audio, PDF, files)",
     };
 
     return (
@@ -2023,8 +2164,6 @@ export default function TutorialEditorPage() {
     return <div style={{ padding: "32px" }}>Tutorial not found.</div>;
   }
 
-  const isPublished = tutorial.status === 'published';
-
   return (
     <div style={styles.container}>
       {/* sidebar - slide list */}
@@ -2104,8 +2243,58 @@ export default function TutorialEditorPage() {
                 );
               };
 
-              return regularSlides.map((slide, idx) =>
-                renderSlideItem(slide, String(idx + 1), 0)
+              const nextOrder = regularSlides.length + 1;
+
+              return (
+                <>
+                  {regularSlides.map((slide, idx) =>
+                    renderSlideItem(slide, String(idx + 1), 0),
+                  )}
+                  <li key="__gots_add_slide__" style={{ listStyle: "none" }}>
+                    <div style={styles.addSlideListSlot}>
+                      {!isPublished && (
+                        <span
+                          style={{ ...styles.slideDragHandle, visibility: "hidden" }}
+                          aria-hidden
+                        >
+                          ⋮⋮
+                        </span>
+                      )}
+                      <span
+                        style={{
+                          ...styles.slideOrder,
+                          backgroundColor: isPublished ? "#e5e7eb" : "#c4b4b2",
+                          color: "#fff",
+                        }}
+                        title="Next slide position"
+                      >
+                        {nextOrder}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={
+                          !isPublished && isActiveSlideValid ? handleAddSlide : undefined
+                        }
+                        disabled={isPublished || !isActiveSlideValid}
+                        style={{
+                          ...styles.addSlideTextButton,
+                          ...(!isPublished && isActiveSlideValid
+                            ? {}
+                            : styles.addSlideTextButtonDisabled),
+                        }}
+                        title={
+                          isPublished
+                            ? "Cannot add slides to a published tutorial"
+                            : isActiveSlideValid
+                              ? "Add new slide"
+                              : "Complete the current slide before adding a new one"
+                        }
+                      >
+                        + Add slide
+                      </button>
+                    </div>
+                  </li>
+                </>
               );
             })()}
           </ul>
@@ -2174,23 +2363,15 @@ export default function TutorialEditorPage() {
               onClick={() => {
                 const config = window.gotsConfig || {};
                 const siteUrl = config.siteUrl || window.location.origin;
-                window.open(`${siteUrl}/gots/play/${id}?preview=1`, '_blank');
+                const slideQ = activeSlideId
+                  ? `&slide=${encodeURIComponent(activeSlideId)}`
+                  : "";
+                window.open(`${siteUrl}/gots/play/${id}?preview=1${slideQ}`, '_blank');
               }}
               style={styles.previewButton}
-              title="Preview this tutorial as a student (branching is included)"
+              title="Preview from the current slide as a student (branching is included)"
             >
               Preview
-            </button>
-            <button
-              onClick={!isPublished && isActiveSlideValid ? handleAddSlide : undefined}
-              disabled={isPublished || !isActiveSlideValid}
-              style={{
-                ...styles.addSlideButton,
-                ...(!isPublished && isActiveSlideValid ? {} : styles.addSlideButtonDisabled),
-              }}
-              title={isPublished ? "Cannot add slides to a published tutorial" : isActiveSlideValid ? "Add new slide" : "Complete the current slide before adding a new one"}
-            >
-              +
             </button>
           </div>
         </div>
@@ -2250,6 +2431,7 @@ export default function TutorialEditorPage() {
               slide={activeSlide}
               allSlides={tutorial.slides || []}
               isPublished={isPublished}
+              tutorialLayoutSettings={layoutSettings}
               onSlidePatch={(updates) => handleSlidePatch(activeSlide.slideId, updates)}
             />
 
@@ -2514,7 +2696,36 @@ const styles = {
     padding: 0,
     margin: 0,
     flex: 1,
+    minHeight: 0,
     overflowY: "auto",
+  },
+  addSlideListSlot: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    padding: "10px 12px",
+    marginBottom: "8px",
+    borderRadius: "6px",
+    border: "1px dashed #d1d5db",
+    backgroundColor: "#fafafa",
+  },
+  addSlideTextButton: {
+    flex: 1,
+    minWidth: 0,
+    textAlign: "left",
+    padding: "6px 4px",
+    fontSize: "14px",
+    fontWeight: "500",
+    color: "#7B2D26",
+    backgroundColor: "transparent",
+    border: "none",
+    borderRadius: "4px",
+    cursor: "pointer",
+    transition: "background-color 0.15s ease",
+  },
+  addSlideTextButtonDisabled: {
+    color: "#9ca3af",
+    cursor: "not-allowed",
   },
   slideItem: {
     display: "flex",
@@ -2641,32 +2852,6 @@ const styles = {
     borderRadius: "6px",
     cursor: "pointer",
     transition: "all 0.15s ease",
-  },
-  addSlideButton: {
-    width: "36px",
-    height: "36px",
-    minWidth: "36px",
-    minHeight: "36px",
-    borderRadius: "50%",
-    border: "none",
-    backgroundColor: "#7B2D26",
-    color: "#fff",
-    fontSize: "20px",
-    fontWeight: "600",
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    lineHeight: "1",
-    padding: "0",
-    margin: "0",
-    transition: "background-color 0.15s ease",
-    boxSizing: "border-box",
-  },
-  addSlideButtonDisabled: {
-    opacity: 0.4,
-    cursor: "not-allowed",
-    backgroundColor: "#9ca3af",
   },
   saveStatus: {
     fontSize: "14px",
@@ -3055,6 +3240,31 @@ const styles = {
     maxHeight: "300px",
     borderRadius: "6px",
     border: "1px solid #e5e7eb",
+  },
+  mediaAudio: {
+    width: "100%",
+    marginTop: "4px",
+  },
+  mediaFileCard: {
+    padding: "16px",
+    border: "1px solid #e5e7eb",
+    borderRadius: "8px",
+    backgroundColor: "#f9fafb",
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+  },
+  mediaFileTitle: {
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#111827",
+    wordBreak: "break-word",
+  },
+  mediaFileHint: {
+    margin: 0,
+    fontSize: "12px",
+    color: "#6b7280",
+    lineHeight: 1.45,
   },
   mediaInfo: {
     display: "flex",

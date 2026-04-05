@@ -10,6 +10,12 @@ import {
   getFirstSlideId,
   getNextSlideId,
 } from "./services/branchHelpers";
+import {
+  resolveEffectiveTokens,
+  tokensToShellStyle,
+  tokensToButtonStyle,
+  tokensToProgressBarStyle,
+} from "./services/themeHelpers";
 
 /**
  * Get student configuration from WordPress
@@ -91,6 +97,15 @@ export default function StudentApp() {
   const regularSlides     = buildRegularSlideOrder(allSlides);
   const branchChildrenMap = buildBranchChildrenMap(allSlides);
   const currentSlide      = currentSlideId ? slidesById[currentSlideId] : null;
+
+  // Resolve effective theme tokens for the current slide.
+  // tutorial.theme_config is the already-resolved tutorial-level config (including
+  // the 3-level fallback) embedded in the public API response by the backend.
+  // Slide-level overrides are merged on top when enabled.
+  const effectiveTokens = resolveEffectiveTokens(
+    tutorial?.theme_config || null,
+    currentSlide?.themeOverride || null,
+  );
 
   //progress bar indicator 
   //show progress within regular slides only; branch slides share the root's position
@@ -526,9 +541,9 @@ export default function StudentApp() {
     );
   }
 
-  // ── Main playback render ─────────────────────────────────────────────────
+  //Main playback render 
   return (
-    <div style={styles.container}>
+    <div style={{ ...styles.container, ...tokensToShellStyle(effectiveTokens) }}>
       {/* Header */}
       <header style={styles.header}>
         <div style={styles.headerLeft}>
@@ -541,17 +556,20 @@ export default function StudentApp() {
         </div>
       </header>
 
-      {/* Progress bar */}
-      <div style={styles.progressBarContainer}>
-        <div
-          style={{
-            ...styles.progressBar,
-            width: progressInfo.total > 0
-              ? `${(progressInfo.current / progressInfo.total) * 100}%`
-              : '0%',
-          }}
-        />
-      </div>
+      {/* Progress bar — hidden when showProgressBar token is false */}
+      {effectiveTokens.showProgressBar !== false && (
+        <div style={styles.progressBarContainer}>
+          <div
+            style={{
+              ...styles.progressBar,
+              ...tokensToProgressBarStyle(effectiveTokens),
+              width: progressInfo.total > 0
+                ? `${(progressInfo.current / progressInfo.total) * 100}%`
+                : '0%',
+            }}
+          />
+        </div>
+      )}
 
       {/* Main content */}
       <main style={styles.main}>
@@ -592,7 +610,7 @@ export default function StudentApp() {
       {/* Navigation */}
       <footer style={styles.footer}>
         {!isFirstSlide ? (
-          <button onClick={handlePrevious} style={styles.navButton}>
+          <button onClick={handlePrevious} style={{ ...styles.navButton, ...tokensToButtonStyle(effectiveTokens) }}>
             Previous
           </button>
         ) : (
@@ -605,6 +623,7 @@ export default function StudentApp() {
           style={{
             ...styles.navButton,
             ...styles.nextButton,
+            ...tokensToButtonStyle(effectiveTokens),
             opacity: (hasRequiredQuestion() && !answers[currentSlide?.slideId]) ? 0.5 : 1,
             cursor:  (hasRequiredQuestion() && !answers[currentSlide?.slideId]) ? "not-allowed" : "pointer",
           }}
@@ -978,6 +997,7 @@ const styles = {
     borderRadius: "12px",
     padding: "32px",
     boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
+    fontFamily: "system-ui, -apple-system, sans-serif",// Reset fontFamily so theme shell tokens don't bleed into content card typography.
   },
   slideTitle: {
     fontSize: "24px",
@@ -1068,8 +1088,11 @@ const styles = {
   embedContainer: {
     display: "flex",
     flexDirection: "column",
+    alignItems: "center",
     gap: "12px",
     width: "100%",
+    padding: "0 16px",
+    boxSizing: "border-box",
     position: "relative",
   },
   embedIframe: {

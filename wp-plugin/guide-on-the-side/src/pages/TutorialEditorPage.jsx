@@ -13,6 +13,10 @@ import {
   saveTutorialThemeSettings,
   listTutorialThemes,
 } from "../services/tutorialThemeApi";
+import {
+  getTutorialLayoutSettings,
+  saveTutorialLayoutSettings,
+} from "../services/tutorialLayoutApi";
 import { THEME_FIELD_DEFS, THEME_TOKEN_DEFAULTS } from "../services/themeSchema";
 import {
   buildBranchChildrenMap,
@@ -827,10 +831,24 @@ function MediaUploadEditor({ data, onChange, onBlur, readOnly = false }) {
 function BranchConfigEditor({ slide, allSlides, isPublished, onSlidePatch, onBlur }) {
   const [expanded, setExpanded] = useState(false);
 
-  // ── Theme override state ──────────────────────────────────────────────────
+  //Theme override state
   const patchTimerRef  = useRef(null);
   const override       = slide.themeOverride || { enabled: false, tokens: {} };
   const themeEnabled   = override.enabled === true;
+  //Layout override state
+  const layoutOverride        = slide.layoutOverride || null;
+  const layoutOverrideEnabled = layoutOverride?.enabled === true;
+  const layoutRatio = (layoutOverrideEnabled && typeof layoutOverride.leftPaneRatio === "number")
+    ? layoutOverride.leftPaneRatio
+    : 30;
+
+  const handleToggleLayoutOverride = (checked) => {
+    onSlidePatch({ layoutOverride: checked ? { enabled: true, leftPaneRatio: 30 } : null });
+  };
+  const handleSetLayoutRatio = (raw) => {
+    const n = Math.min(50, Math.max(10, parseInt(raw, 10) || 30));
+    onSlidePatch({ layoutOverride: { enabled: true, leftPaneRatio: n } });
+  };
   const propTokens     = override.tokens || {};
   const [draftTokens, setDraftTokens] = useState(propTokens);
 
@@ -1149,6 +1167,43 @@ function BranchConfigEditor({ slide, allSlides, isPublished, onSlidePatch, onBlu
               </div>
             )}
           </div>
+
+          {/* ── Layout Override ── */}
+          <div style={{ borderTop: "1px solid #e5e7eb", marginTop: "12px", paddingTop: "12px" }}>
+            <label style={styles.branchCheckboxLabel}>
+              <input
+                type="checkbox"
+                checked={layoutOverrideEnabled}
+                disabled={isPublished}
+                onChange={(e) => handleToggleLayoutOverride(e.target.checked)}
+                style={{ marginRight: "8px", cursor: isPublished ? "default" : "pointer" }}
+              />
+              Override pane ratio for this slide
+            </label>
+            <p style={{ fontSize: "12px", color: "#9ca3af", margin: "4px 0 0 0" }}>
+              Overrides the tutorial-wide pane ratio for this slide only.
+            </p>
+            {layoutOverrideEnabled && (
+              <div style={{ marginTop: "10px" }}>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: "500", color: "#374151", marginBottom: "4px" }}>
+                  Left pane width
+                </label>
+                <input
+                  type="range"
+                  min="10"
+                  max="50"
+                  step="1"
+                  value={layoutRatio}
+                  disabled={isPublished}
+                  onChange={(e) => handleSetLayoutRatio(e.target.value)}
+                  style={{ width: "100%", cursor: isPublished ? "not-allowed" : "pointer" }}
+                />
+                <p style={{ fontSize: "12px", color: "#6b7280", margin: "4px 0 0 0" }}>
+                  Left pane: {layoutRatio}% · Right pane: {100 - layoutRatio}%
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -1180,6 +1235,10 @@ export default function TutorialEditorPage() {
   const [availableThemes, setAvailableThemes]   = useState([]);
   const [themeSaveStatus, setThemeSaveStatus]   = useState("");
 
+  // Layout settings state (tutorial-wide pane ratio)
+  const [layoutSettings, setLayoutSettings]     = useState({ leftPaneRatio: null });
+  const [layoutSaveStatus, setLayoutSaveStatus] = useState("");
+
   // Tutorial-wide settings modal
   const [showTutorialSettings, setShowTutorialSettings] = useState(false);
 
@@ -1205,7 +1264,7 @@ export default function TutorialEditorPage() {
     fetchTutorial();
   }, [id]);
 
-  // Load certificate + theme settings and available templates alongside the tutorial
+  // Load certificate + theme + layout settings and available templates alongside the tutorial
   useEffect(() => {
     if (!id) return;
     Promise.all([
@@ -1213,11 +1272,13 @@ export default function TutorialEditorPage() {
       listTemplates().catch(() => []),
       getTutorialThemeSettings(id).catch(() => null),
       listTutorialThemes().catch(() => []),
-    ]).then(([settings, templates, themeSettingsData, themes]) => {
+      getTutorialLayoutSettings(id).catch(() => null),
+    ]).then(([settings, templates, themeSettingsData, themes, layoutSettingsData]) => {
       if (settings) setCertSettings(settings);
       if (templates) setCertTemplates(templates);
       if (themeSettingsData) setThemeSettings(themeSettingsData);
       if (themes) setAvailableThemes(themes);
+      if (layoutSettingsData) setLayoutSettings(layoutSettingsData);
     });
   }, [id]);
 
@@ -1261,6 +1322,7 @@ export default function TutorialEditorPage() {
         branchParentSlideId: slideData.branchParentSlideId ?? null,
         branchConfig:        slideData.branchConfig        ?? null,
         themeOverride:       slideData.themeOverride       ?? null,
+        layoutOverride:      slideData.layoutOverride      ?? null,
       }],
     };
 
@@ -1515,21 +1577,23 @@ export default function TutorialEditorPage() {
     }
   };
 
-  // Save certificate + theme settings and close the modal.
+  // Save certificate + theme + layout settings and close the modal.
   // Keeps the modal open during the request so success/error is visible.
   const handleCloseTutorialSettings = async () => {
     setCertSaving(true);
     setCertSaveStatus("");
     setThemeSaveStatus("");
+    setLayoutSaveStatus("");
 
     // Save independently so a failure in one doesn't suppress the other's result.
-    const [certResult, themeResult] = await Promise.allSettled([
+    const [certResult, themeResult, layoutResult] = await Promise.allSettled([
       saveTutorialCertSettings(id, {
         enabled:    certSettings.enabled,
         templateId: certSettings.template_id || 0,
         issuerName: certSettings.issuer_name || "",
       }),
       saveTutorialThemeSettings(id, { themeId: themeSettings.theme_id || null }),
+      saveTutorialLayoutSettings(id, { leftPaneRatio: layoutSettings.leftPaneRatio ?? null }),
     ]);
 
     if (certResult.status === "fulfilled") {
@@ -1546,14 +1610,26 @@ export default function TutorialEditorPage() {
       setThemeSaveStatus("Error: " + themeResult.reason?.message);
     }
 
+    if (layoutResult.status === "fulfilled") {
+      setLayoutSettings(layoutResult.value);
+      setLayoutSaveStatus("Saved");
+    } else {
+      setLayoutSaveStatus("Error: " + layoutResult.reason?.message);
+    }
+
     setCertSaving(false);
 
-    // Only close if both saved successfully.
-    if (certResult.status === "fulfilled" && themeResult.status === "fulfilled") {
+    // Only close if all three saved successfully.
+    if (
+      certResult.status === "fulfilled" &&
+      themeResult.status === "fulfilled" &&
+      layoutResult.status === "fulfilled"
+    ) {
       setTimeout(() => {
         setShowTutorialSettings(false);
         setCertSaveStatus("");
         setThemeSaveStatus("");
+        setLayoutSaveStatus("");
       }, 600);
     }
   };
@@ -2308,6 +2384,34 @@ export default function TutorialEditorPage() {
               {themeSaveStatus && (
                 <span style={{ fontSize: "13px", marginTop: "8px", display: "block", color: themeSaveStatus.startsWith("Error") ? "#dc2626" : "#16a34a" }}>
                   {themeSaveStatus}
+                </span>
+              )}
+            </div>
+
+            {/* Layout Settings Section */}
+            <div style={styles.modalSection}>
+              <h3 style={styles.modalSectionTitle}>Layout Settings</h3>
+              <div>
+                <label style={styles.certPanelFieldLabel}>Left pane width</label>
+                <p style={{ fontSize: "12px", color: "#9ca3af", margin: "0 0 8px 0" }}>
+                  Controls the playback width split between the slide content and interactive content.
+                </p>
+                <input
+                  type="range"
+                  min="10"
+                  max="50"
+                  step="1"
+                  value={layoutSettings.leftPaneRatio ?? 30}
+                  onChange={(e) => setLayoutSettings((p) => ({ ...p, leftPaneRatio: Number(e.target.value) }))}
+                  style={{ width: "100%", cursor: "pointer" }}
+                />
+                <p style={{ fontSize: "12px", color: "#6b7280", marginTop: "4px" }}>
+                  Left pane: {layoutSettings.leftPaneRatio ?? 30}% · Right pane: {100 - (layoutSettings.leftPaneRatio ?? 30)}%
+                </p>
+              </div>
+              {layoutSaveStatus && (
+                <span style={{ fontSize: "13px", marginTop: "8px", display: "block", color: layoutSaveStatus.startsWith("Error") ? "#dc2626" : "#16a34a" }}>
+                  {layoutSaveStatus}
                 </span>
               )}
             </div>

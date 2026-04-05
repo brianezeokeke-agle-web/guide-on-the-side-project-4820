@@ -12,6 +12,7 @@ import {
 } from "./services/branchHelpers";
 import {
   resolveEffectiveTokens,
+  resolveEffectivePaneRatio,
   tokensToShellStyle,
   tokensToButtonStyle,
   tokensToProgressBarStyle,
@@ -105,6 +106,13 @@ export default function StudentApp() {
   const effectiveTokens = resolveEffectiveTokens(
     tutorial?.theme_config || null,
     currentSlide?.themeOverride || null,
+  );
+
+  // Resolve the effective left-pane width percentage.
+  // Precedence: slide layoutOverride → tutorial layoutSettings → system default.
+  const effectivePaneRatio = resolveEffectivePaneRatio(
+    tutorial?.layoutSettings ?? null,
+    currentSlide?.layoutOverride ?? null,
   );
 
   //progress bar indicator 
@@ -579,7 +587,13 @@ export default function StudentApp() {
               {currentSlide.title || `Slide ${progressInfo.current}`}
             </h2>
 
-            <div style={styles.panesContainer}>
+            <div
+              className="gots-panes-grid"
+              style={{
+                ...styles.panesContainer,
+                gridTemplateColumns: `${effectivePaneRatio}% ${100 - effectivePaneRatio}%`,
+              }}
+            >
               {/* Left Pane */}
               <div style={styles.pane}>
                 {renderPane(currentSlide.leftPane, currentSlide.slideId)}
@@ -739,18 +753,22 @@ export default function StudentApp() {
 
     if (data.mediaType === "image") {
       return (
-        <img
-          src={data.url}
-          alt={data.altText || "Tutorial media"}
-          style={styles.mediaImage}
-        />
+        <div style={styles.mediaContainer}>
+          <img
+            src={data.url}
+            alt={data.altText || "Tutorial media"}
+            style={styles.mediaImage}
+          />
+        </div>
       );
     }
     if (data.mediaType === "video") {
       return (
-        <video src={data.url} controls style={styles.mediaVideo}>
-          Your browser does not support video playback.
-        </video>
+        <div style={styles.mediaContainer}>
+          <video src={data.url} controls style={styles.mediaVideo}>
+            Your browser does not support video playback.
+          </video>
+        </div>
       );
     }
     return <div style={styles.emptyPane}>Unsupported media type</div>;
@@ -1007,7 +1025,6 @@ const styles = {
   },
   panesContainer: {
     display: "grid",
-    gridTemplateColumns: "30% 70%",
     gap: "32px",
   },
   pane: { minHeight: "200px" },
@@ -1074,14 +1091,21 @@ const styles = {
     fontSize: "15px",
     fontWeight: "500",
   },
+  mediaContainer: {
+    width: "100%",
+    padding: "0 16px",
+    boxSizing: "border-box",
+  },
   mediaImage: {
-    maxWidth: "100%",
+    display: "block",
+    width: "100%",
     maxHeight: "400px",
     objectFit: "contain",
     borderRadius: "8px",
   },
   mediaVideo: {
-    maxWidth: "100%",
+    display: "block",
+    width: "100%",
     maxHeight: "400px",
     borderRadius: "8px",
   },

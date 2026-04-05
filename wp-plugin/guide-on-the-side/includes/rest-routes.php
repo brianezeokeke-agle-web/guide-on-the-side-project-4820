@@ -321,6 +321,27 @@ function gots_register_rest_routes() {
         ),
     ));
 
+    // GET /tutorials/{id}/layout-settings — get tutorial-level pane ratio (admin)
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/layout-settings', array(
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'gots_rest_get_tutorial_layout_settings_endpoint',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
+    // PUT /tutorials/{id}/layout-settings — save tutorial-level pane ratio (admin)
+    // Dedicated endpoint — does NOT touch slides. Mirrors theme-settings pattern.
+    register_rest_route($namespace, '/tutorials/(?P<id>\d+)/layout-settings', array(
+        'methods'             => WP_REST_Server::EDITABLE,
+        'callback'            => 'gots_rest_update_tutorial_layout_settings',
+        'permission_callback' => 'gots_rest_permissions_check_write',
+        'args'                => array(
+            'id' => array('validate_callback' => function($p) { return is_numeric($p); }),
+        ),
+    ));
+
     //analytics endpoints begin from here
 
     // POST /analytics/event - to record an anonymous analytics event. this needs no auth
@@ -572,6 +593,7 @@ function gots_rest_get_tutorial_public($request) {
     $data = gots_format_tutorial_response($post);
     $resolved_theme          = gots_resolve_tutorial_theme($post->ID);
     $data['theme_config']    = isset($resolved_theme->config_json) ? $resolved_theme->config_json : null;
+    $data['layoutSettings']  = gots_get_tutorial_layout_settings($post->ID);
     return rest_ensure_response($data);
 }
 
@@ -1764,6 +1786,66 @@ function gots_rest_update_tutorial_theme_settings($request) {
     gots_save_tutorial_theme_settings($tutorial_id, array('theme_id' => $theme_id ?: null));
 
     return rest_ensure_response(gots_get_tutorial_theme_settings($tutorial_id));
+}
+
+/**
+ * GET /tutorials/{id}/layout-settings
+ */
+function gots_rest_get_tutorial_layout_settings_endpoint($request) {
+    $tutorial_id = absint($request->get_param('id'));
+
+    $post = get_post($tutorial_id);
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error('tutorial_not_found', 'Tutorial not found.', array('status' => 404));
+    }
+
+    return rest_ensure_response(gots_get_tutorial_layout_settings($tutorial_id));
+}
+
+/**
+ * PUT /tutorials/{id}/layout-settings
+ *
+ * Dedicated endpoint — only writes _gots_layout_left_pane_ratio. Never touches slides.
+ * Mirrors gots_rest_update_tutorial_theme_settings() exactly.
+ */
+function gots_rest_update_tutorial_layout_settings($request) {
+    $tutorial_id = absint($request->get_param('id'));
+    $params      = $request->get_json_params() ?: array();
+
+    $post = get_post($tutorial_id);
+    if (!$post || $post->post_type !== 'gots_tutorial') {
+        return new WP_Error('tutorial_not_found', 'Tutorial not found.', array('status' => 404));
+    }
+
+    // leftPaneRatio: integer 10–50, or null/absent to clear the setting.
+    // is_numeric() must come BEFORE absint() — absint("wide") silently returns 0,
+    // which would bypass the range check and incorrectly clear the stored value.
+    if (!array_key_exists('leftPaneRatio', $params) || $params['leftPaneRatio'] === null) {
+        gots_save_tutorial_layout_settings($tutorial_id, array('leftPaneRatio' => null));
+        return rest_ensure_response(gots_get_tutorial_layout_settings($tutorial_id));
+    }
+
+    if (!is_numeric($params['leftPaneRatio'])) {
+        return new WP_Error(
+            'invalid_ratio',
+            'leftPaneRatio must be between 10 and 50.',
+            array('status' => 400)
+        );
+    }
+
+    $ratio = absint($params['leftPaneRatio']);
+
+    if ($ratio < 10 || $ratio > 50) {
+        return new WP_Error(
+            'invalid_ratio',
+            'leftPaneRatio must be between 10 and 50.',
+            array('status' => 400)
+        );
+    }
+
+    gots_save_tutorial_layout_settings($tutorial_id, array('leftPaneRatio' => $ratio));
+
+    return rest_ensure_response(gots_get_tutorial_layout_settings($tutorial_id));
 }
 
 /**

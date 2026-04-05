@@ -96,3 +96,47 @@ export function tokensToProgressBarStyle(tokens) {
     backgroundColor: tokens.primaryColor || "#7B2D26",
   };
 }
+
+// The system default left-pane ratio when no tutorial or slide value is configured.
+// Matches the previous hardcoded "30% 70%" split in StudentApp.jsx.
+export const LAYOUT_DEFAULT_LEFT_RATIO = 30;
+export const LAYOUT_MIN_LEFT_RATIO = 10;
+export const LAYOUT_MAX_LEFT_RATIO = 50;
+
+/**
+ * Resolve the effective left-pane width percentage for a slide.
+ *
+ * Resolution order (mirrors resolveEffectiveTokens):
+ *   1. Slide layoutOverride if enabled and value is in valid range (10–50)
+ *   2. Tutorial-wide layoutSettings if value is in valid range (10–50)
+ *   3. System default (LAYOUT_DEFAULT_LEFT_RATIO)
+ *
+ * Always returns an integer in [10, 50].
+ *
+ * @param {object|null} tutorialLayoutSettings  e.g. { leftPaneRatio: 35 } from tutorial API
+ * @param {object|null} slideLayoutOverride     e.g. { enabled: true, leftPaneRatio: 40 } from slide
+ * @returns {number}
+ */
+export function resolveEffectivePaneRatio(tutorialLayoutSettings, slideLayoutOverride) {
+  // 1. Slide-level override takes highest priority
+  if (
+    slideLayoutOverride &&
+    slideLayoutOverride.enabled === true &&
+    typeof slideLayoutOverride.leftPaneRatio === "number"
+  ) {
+    const r = slideLayoutOverride.leftPaneRatio;
+    if (r >= 10 && r <= 50) return r;
+  }
+
+  // 2. Tutorial-wide setting
+  if (
+    tutorialLayoutSettings &&
+    typeof tutorialLayoutSettings.leftPaneRatio === "number"
+  ) {
+    const r = tutorialLayoutSettings.leftPaneRatio;
+    if (r >= 10 && r <= 50) return r;
+  }
+
+  // 3. System default
+  return LAYOUT_DEFAULT_LEFT_RATIO;
+}

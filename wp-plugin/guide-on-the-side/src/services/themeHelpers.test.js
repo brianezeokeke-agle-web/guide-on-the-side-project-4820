@@ -2,6 +2,8 @@
 
 import {
   resolveEffectiveTokens,
+  resolveEffectivePaneRatio,
+  LAYOUT_DEFAULT_LEFT_RATIO,
   tokensToShellStyle,
   tokensToButtonStyle,
   tokensToProgressBarStyle,
@@ -11,7 +13,7 @@ import { THEME_TOKEN_DEFAULTS } from './themeSchema';
 
 describe('themeHelpers', () => {
 
-  // ── resolveEffectiveTokens ────────────────────────────────────────────────
+  //resolveEffectiveTokens
 
   describe('resolveEffectiveTokens', () => {
     test('returns built-in defaults when no tutorial theme and no slide override', () => {
@@ -84,7 +86,7 @@ describe('themeHelpers', () => {
     });
   });
 
-  // ── tokensToShellStyle ────────────────────────────────────────────────────
+  //tokensToShellStyle
 
   describe('tokensToShellStyle', () => {
     test('returns backgroundColor from tokens', () => {
@@ -113,7 +115,7 @@ describe('themeHelpers', () => {
     });
   });
 
-  // ── tokensToButtonStyle ───────────────────────────────────────────────────
+  //tokensToButtonStyle
 
   describe('tokensToButtonStyle', () => {
     test('returns filled style by default', () => {
@@ -142,7 +144,7 @@ describe('themeHelpers', () => {
     });
   });
 
-  // ── tokensToProgressBarStyle ──────────────────────────────────────────────
+  //tokensToProgressBarStyle
 
   describe('tokensToProgressBarStyle', () => {
     test('returns primaryColor as backgroundColor', () => {
@@ -153,6 +155,81 @@ describe('themeHelpers', () => {
     test('falls back to default primaryColor when token is missing', () => {
       const style = tokensToProgressBarStyle({});
       expect(style.backgroundColor).toBe('#7B2D26');
+    });
+  });
+
+  //resolveEffectivePaneRatio
+
+  describe('resolveEffectivePaneRatio', () => {
+    test('returns system default when both arguments are null', () => {
+      expect(resolveEffectivePaneRatio(null, null)).toBe(LAYOUT_DEFAULT_LEFT_RATIO);
+    });
+
+    test('returns system default when both arguments are undefined', () => {
+      expect(resolveEffectivePaneRatio(undefined, undefined)).toBe(LAYOUT_DEFAULT_LEFT_RATIO);
+    });
+
+    test('uses tutorial-wide setting when no slide override', () => {
+      expect(resolveEffectivePaneRatio({ leftPaneRatio: 40 }, null)).toBe(40);
+    });
+
+    test('uses slide override over tutorial-wide setting', () => {
+      expect(resolveEffectivePaneRatio(
+        { leftPaneRatio: 40 },
+        { enabled: true, leftPaneRatio: 25 },
+      )).toBe(25);
+    });
+
+    test('ignores slide override when enabled is false', () => {
+      expect(resolveEffectivePaneRatio(
+        { leftPaneRatio: 40 },
+        { enabled: false, leftPaneRatio: 25 },
+      )).toBe(40);
+    });
+
+    test('ignores slide override when leftPaneRatio is missing', () => {
+      expect(resolveEffectivePaneRatio(
+        { leftPaneRatio: 40 },
+        { enabled: true },
+      )).toBe(40);
+    });
+
+    test('falls back to system default when tutorial ratio is out of range (too low)', () => {
+      expect(resolveEffectivePaneRatio({ leftPaneRatio: 5 }, null)).toBe(LAYOUT_DEFAULT_LEFT_RATIO);
+    });
+
+    test('falls back to system default when tutorial ratio is out of range (too high)', () => {
+      expect(resolveEffectivePaneRatio({ leftPaneRatio: 80 }, null)).toBe(LAYOUT_DEFAULT_LEFT_RATIO);
+    });
+
+    test('falls back to system default when slide override ratio is out of range', () => {
+      expect(resolveEffectivePaneRatio(
+        { leftPaneRatio: 35 },
+        { enabled: true, leftPaneRatio: 99 },
+      )).toBe(35);
+    });
+
+    test('accepts boundary value 10 as valid', () => {
+      expect(resolveEffectivePaneRatio({ leftPaneRatio: 10 }, null)).toBe(10);
+    });
+
+    test('accepts boundary value 50 as valid', () => {
+      expect(resolveEffectivePaneRatio({ leftPaneRatio: 50 }, null)).toBe(50);
+    });
+
+    test('always returns a number', () => {
+      expect(typeof resolveEffectivePaneRatio(null, null)).toBe('number');
+    });
+
+    test('falls back to system default when tutorial leftPaneRatio is not a number', () => {
+      expect(resolveEffectivePaneRatio({ leftPaneRatio: 'wide' }, null)).toBe(LAYOUT_DEFAULT_LEFT_RATIO);
+    });
+
+    test('falls back to system default when slide override leftPaneRatio is not a number', () => {
+      expect(resolveEffectivePaneRatio(
+        null,
+        { enabled: true, leftPaneRatio: 'wide' },
+      )).toBe(LAYOUT_DEFAULT_LEFT_RATIO);
     });
   });
 

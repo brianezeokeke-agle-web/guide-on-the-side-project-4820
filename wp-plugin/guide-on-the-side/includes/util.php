@@ -311,6 +311,10 @@ function gots_merge_slides($existing_slides, $incoming_slides) {
             if (array_key_exists('themeOverride', $incoming)) {
                 $merged['themeOverride'] = $incoming['themeOverride'];
             }
+            // layoutOverride: absent = preserve existing; explicit null = clear override
+            if (array_key_exists('layoutOverride', $incoming)) {
+                $merged['layoutOverride'] = $incoming['layoutOverride'];
+            }
 
             // ensure that slideId is preserved (immutable)
             $merged['slideId'] = $slide_id;
@@ -329,6 +333,7 @@ function gots_merge_slides($existing_slides, $incoming_slides) {
                 'branchParentSlideId' => isset($incoming['branchParentSlideId']) ? $incoming['branchParentSlideId'] : null,
                 'branchConfig'        => isset($incoming['branchConfig']) ? $incoming['branchConfig'] : null,
                 'themeOverride'       => isset($incoming['themeOverride']) ? $incoming['themeOverride'] : null,
+                'layoutOverride'      => isset($incoming['layoutOverride']) ? $incoming['layoutOverride'] : null,
             );
             $existing_map[$slide_id] = $new_slide;
         }
@@ -561,6 +566,11 @@ function gots_sanitize_slides($slides) {
             $clean_slide['themeOverride'] = $sanitized_override;
         }
 
+        // layoutOverride: null clears the override; object must have enabled=true and leftPaneRatio 10–50
+        if (array_key_exists('layoutOverride', $slide)) {
+            $clean_slide['layoutOverride'] = gots_sanitize_layout_override($slide['layoutOverride']);
+        }
+
         $sanitized[] = $clean_slide;
     }
     
@@ -656,6 +666,80 @@ function gots_sanitize_slide_theme_override($override) {
         'enabled' => true,
         'tokens'  => $validated_tokens,
     );
+}
+
+/**
+ * Sanitize a slide-level layoutOverride object.
+ *
+ * Shape when active: { enabled: true, leftPaneRatio: <int 10-50> }
+ * Returns null if input is null, disabled, or ratio is out of range.
+ *
+ * Valid range for leftPaneRatio is 10–50 inclusive (mirrors frontend validation).
+ *
+ * @param mixed $override  Raw layoutOverride value from incoming slide.
+ * @return array|null
+ */
+function gots_sanitize_layout_override($override) {
+    if ($override === null) {
+        return null;
+    }
+
+    if (!is_array($override)) {
+        return null;
+    }
+
+    $enabled = !empty($override['enabled']);
+
+    if (!$enabled) {
+        return null;
+    }
+
+    if (!isset($override['leftPaneRatio'])) {
+        return null;
+    }
+
+    $ratio = absint($override['leftPaneRatio']);
+
+    if ($ratio < 10 || $ratio > 50) {
+        return null;
+    }
+
+    return array(
+        'enabled'       => true,
+        'leftPaneRatio' => $ratio,
+    );
+}
+
+/**
+ * Get tutorial-wide layout settings.
+ *
+ * @param int $tutorial_id
+ * @return array{ leftPaneRatio: int|null }
+ */
+function gots_get_tutorial_layout_settings($tutorial_id) {
+    $raw = (int) get_post_meta($tutorial_id, '_gots_layout_left_pane_ratio', true);
+    return array(
+        'leftPaneRatio' => $raw >= 10 && $raw <= 50 ? $raw : null,
+    );
+}
+
+/**
+ * Save tutorial-wide layout settings.
+ * Only writes _gots_layout_left_pane_ratio — never touches slides.
+ *
+ * @param int   $tutorial_id
+ * @param array $settings  { leftPaneRatio: int|null }
+ */
+function gots_save_tutorial_layout_settings($tutorial_id, $settings) {
+    $tutorial_id = absint($tutorial_id);
+    $ratio = isset($settings['leftPaneRatio']) ? absint($settings['leftPaneRatio']) : 0;
+
+    if ($ratio >= 10 && $ratio <= 50) {
+        update_post_meta($tutorial_id, '_gots_layout_left_pane_ratio', $ratio);
+    } else {
+        // Out-of-range or null: clear stored value so fallback takes effect
+        delete_post_meta($tutorial_id, '_gots_layout_left_pane_ratio');
+    }
 }
 
 /**

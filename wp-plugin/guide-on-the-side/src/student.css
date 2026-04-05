@@ -84,3 +84,12 @@ body {
 .student-error-link:hover {
   text-decoration: underline;
 }
+
+/* Collapse the two-pane grid to a single column on narrow screens,
+   regardless of the configured ratio. The ratio only applies when
+   the layout is wide enough to be usable as two panes. */
+@media (max-width: 768px) {
+  .gots-panes-grid {
+    grid-template-columns: 1fr !important;
+  }
+}

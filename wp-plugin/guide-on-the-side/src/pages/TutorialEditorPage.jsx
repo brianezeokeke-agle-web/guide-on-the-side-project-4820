@@ -827,6 +827,40 @@ function MediaUploadEditor({ data, onChange, onBlur, readOnly = false }) {
 function BranchConfigEditor({ slide, allSlides, isPublished, onSlidePatch, onBlur }) {
   const [expanded, setExpanded] = useState(false);
 
+  // ── Theme override state ──────────────────────────────────────────────────
+  const patchTimerRef  = useRef(null);
+  const override       = slide.themeOverride || { enabled: false, tokens: {} };
+  const themeEnabled   = override.enabled === true;
+  const propTokens     = override.tokens || {};
+  const [draftTokens, setDraftTokens] = useState(propTokens);
+
+  const slideId = slide.slideId;
+  useEffect(() => {
+    clearTimeout(patchTimerRef.current);
+    setDraftTokens(slide.themeOverride?.tokens || {});
+  }, [slideId]);
+  useEffect(() => () => clearTimeout(patchTimerRef.current), []);
+
+  const handleToggleTheme = (checked) => {
+    clearTimeout(patchTimerRef.current);
+    setDraftTokens({});
+    onSlidePatch({ themeOverride: checked ? { enabled: true, tokens: {} } : null });
+  };
+  const setToken = (key, value) => {
+    const next = { ...draftTokens, [key]: value };
+    setDraftTokens(next);
+    onSlidePatch({ themeOverride: { enabled: true, tokens: next } });
+  };
+  const setTokenDebounced = (key, value) => {
+    const next = { ...draftTokens, [key]: value };
+    setDraftTokens(next);
+    clearTimeout(patchTimerRef.current);
+    patchTimerRef.current = setTimeout(() => {
+      onSlidePatch({ themeOverride: { enabled: true, tokens: next } });
+    }, 400);
+  };
+  // ─────────────────────────────────────────────────────────────────────────
+
   const isBranch = Boolean(slide.isBranchSlide);
 
   // Eligible parents: regular question slides that appear BEFORE this slide in order
@@ -921,6 +955,11 @@ function BranchConfigEditor({ slide, allSlides, isPublished, onSlidePatch, onBlu
       >
         <span style={styles.configurationsChevron}>{expanded ? '▼' : '▶'}</span>
         Slide Configurations
+        {themeEnabled && (
+          <span style={{ fontSize: "11px", fontWeight: "500", backgroundColor: "#dbeafe", color: "#1d4ed8", padding: "1px 7px", borderRadius: "9999px", marginLeft: "8px" }}>
+            Theme override
+          </span>
+        )}
       </button>
 
       {expanded && (
@@ -1035,135 +1074,81 @@ function BranchConfigEditor({ slide, allSlides, isPublished, onSlidePatch, onBlu
               )}
             </div>
           )}
-        </div>
-      )}
-    </div>
-  );
-}
 
-// Collapsible per-slide theme override editor, rendered below BranchConfigEditor.
-// Lets authors override individual shell-level tokens for a single slide.
-function SlideThemeOverrideEditor({ slide, isPublished, onSlidePatch }) {
-  const [expanded, setExpanded] = useState(false);
-  const patchTimerRef = useRef(null);
-
-  const override  = slide.themeOverride || { enabled: false, tokens: {} };
-  const isEnabled = override.enabled === true;
-  const propTokens = override.tokens || {};
-
-  // Local draft mirrors prop tokens and updates immediately on every keystroke/drag
-  // so controlled inputs feel responsive. Persistence is debounced separately.
-  const [draftTokens, setDraftTokens] = useState(propTokens);
-
-  // Sync draft when the active slide changes (user clicks a different slide).
-  const slideId = slide.slideId;
-  useEffect(() => {
-    clearTimeout(patchTimerRef.current);
-    setDraftTokens(slide.themeOverride?.tokens || {});
-  }, [slideId]);
-
-  // Cancel any pending debounced save on unmount.
-  useEffect(() => () => clearTimeout(patchTimerRef.current), []);
-
-  const handleToggleEnabled = (checked) => {
-    clearTimeout(patchTimerRef.current);
-    setDraftTokens({});
-    onSlidePatch({ themeOverride: checked ? { enabled: true, tokens: {} } : null });
-  };
-
-  // Discrete inputs (select, bool) — update draft and persist immediately.
-  const setToken = (key, value) => {
-    const next = { ...draftTokens, [key]: value };
-    setDraftTokens(next);
-    onSlidePatch({ themeOverride: { enabled: true, tokens: next } });
-  };
-
-  // Continuous inputs (color picker, hex text) — update draft immediately for
-  // responsive rendering; coalesce rapid changes into a single persist 400 ms
-  // after the last change so the server isn't hit on every drag frame.
-  const setTokenDebounced = (key, value) => {
-    const next = { ...draftTokens, [key]: value };
-    setDraftTokens(next);
-    clearTimeout(patchTimerRef.current);
-    patchTimerRef.current = setTimeout(() => {
-      onSlidePatch({ themeOverride: { enabled: true, tokens: next } });
-    }, 400);
-  };
-
-  return (
-    <div style={styles.configurationsContainer}>
-      <button onClick={() => setExpanded((p) => !p)} style={styles.configurationsToggle} type="button">
-        <span style={styles.configurationsChevron}>{expanded ? "▼" : "▶"}</span>
-        Slide Theme Override
-        {isEnabled && (
-          <span style={{ fontSize: "11px", fontWeight: "500", backgroundColor: "#dbeafe", color: "#1d4ed8", padding: "1px 7px", borderRadius: "9999px", marginLeft: "8px" }}>
-            Active
-          </span>
-        )}
-      </button>
-      {expanded && (
-        <div style={styles.configurationsBody}>
-          <p style={{ fontSize: "12px", color: "#6b7280", margin: "0 0 12px 0" }}>
-            Override the tutorial theme for this slide's playback shell. Leave a token blank to inherit from the tutorial theme.
+          {/* Branch section helper — always visible */}
+          <p style={{ fontSize: "12px", color: "#9ca3af", margin: "8px 0 0 0" }}>
+            Use this to show a slide only when a student answers a specific question in a particular way.
           </p>
-          <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: isPublished ? "not-allowed" : "pointer", marginBottom: "12px", fontSize: "13px", fontWeight: "500", color: "#374151" }}>
-            <input
-              type="checkbox"
-              checked={isEnabled}
-              disabled={isPublished}
-              onChange={(e) => handleToggleEnabled(e.target.checked)}
-            />
-            Enable override for this slide
-          </label>
-          {isEnabled && THEME_FIELD_DEFS.map(({ key, label, type, options }) => (
-            <div key={key}>
-              <label style={{ display: "block", fontSize: "12px", fontWeight: "500", color: "#374151", marginBottom: "4px" }}>{label}</label>
-              {type === "color" && (
-                <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "10px" }}>
-                  <input
-                    type="color"
-                    value={draftTokens[key] || THEME_TOKEN_DEFAULTS[key] || "#ffffff"}
-                    disabled={isPublished}
-                    onChange={(e) => setTokenDebounced(key, e.target.value)}
-                    style={{ width: "36px", height: "28px", border: "none", cursor: isPublished ? "not-allowed" : "pointer" }}
-                  />
-                  <input
-                    type="text"
-                    value={draftTokens[key] || ""}
-                    disabled={isPublished}
-                    onChange={(e) => setTokenDebounced(key, e.target.value)}
-                    placeholder={`inherit (${THEME_TOKEN_DEFAULTS[key]})`}
-                    maxLength={7}
-                    style={{ width: "150px", padding: "4px 8px", fontSize: "13px", border: "1px solid #d1d5db", borderRadius: "4px", boxSizing: "border-box" }}
-                  />
-                </div>
-              )}
-              {type === "select" && (
-                <select
-                  value={draftTokens[key] || ""}
-                  disabled={isPublished}
-                  onChange={(e) => setToken(key, e.target.value)}
-                  style={{ width: "100%", padding: "6px 8px", fontSize: "13px", border: "1px solid #d1d5db", borderRadius: "4px", backgroundColor: "#fff", marginBottom: "10px", boxSizing: "border-box" }}
-                >
-                  <option value="">— inherit from tutorial theme —</option>
-                  {options.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              )}
-              {type === "bool" && (
-                <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: isPublished ? "not-allowed" : "pointer", marginBottom: "10px", fontSize: "13px" }}>
-                  <input
-                    type="checkbox"
-                    checked={key in draftTokens ? !!draftTokens[key] : !!THEME_TOKEN_DEFAULTS[key]}
-                    disabled={isPublished}
-                    onChange={(e) => setToken(key, e.target.checked)}
-                  />
-                  {label}
-                </label>
-              )}
-            </div>
-          ))}
+
+          {/* ── Theme Override ── */}
+          <div style={{ borderTop: "1px solid #e5e7eb", marginTop: "12px", paddingTop: "12px" }}>
+            <label style={styles.branchCheckboxLabel}>
+              <input
+                type="checkbox"
+                checked={themeEnabled}
+                disabled={isPublished}
+                onChange={(e) => handleToggleTheme(e.target.checked)}
+                style={{ marginRight: "8px", cursor: isPublished ? "default" : "pointer" }}
+              />
+              Override theme for this slide
+            </label>
+            <p style={{ fontSize: "12px", color: "#9ca3af", margin: "4px 0 0 0" }}>
+              Overrides the tutorial theme for this slide's playback shell. Leave a token blank to inherit.
+            </p>
+            {themeEnabled && (
+              <div style={{ marginTop: "8px" }}>
+                {THEME_FIELD_DEFS.map(({ key, label, type, options }) => (
+                  <div key={key}>
+                    <label style={{ display: "block", fontSize: "12px", fontWeight: "500", color: "#374151", marginBottom: "4px" }}>{label}</label>
+                    {type === "color" && (
+                      <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "10px" }}>
+                        <input
+                          type="color"
+                          value={draftTokens[key] || THEME_TOKEN_DEFAULTS[key] || "#ffffff"}
+                          disabled={isPublished}
+                          onChange={(e) => setTokenDebounced(key, e.target.value)}
+                          style={{ width: "36px", height: "28px", border: "none", cursor: isPublished ? "not-allowed" : "pointer" }}
+                        />
+                        <input
+                          type="text"
+                          value={draftTokens[key] || ""}
+                          disabled={isPublished}
+                          onChange={(e) => setTokenDebounced(key, e.target.value)}
+                          placeholder={`inherit (${THEME_TOKEN_DEFAULTS[key]})`}
+                          maxLength={7}
+                          style={{ width: "150px", padding: "4px 8px", fontSize: "13px", border: "1px solid #d1d5db", borderRadius: "4px", boxSizing: "border-box" }}
+                        />
+                      </div>
+                    )}
+                    {type === "select" && (
+                      <select
+                        value={draftTokens[key] || ""}
+                        disabled={isPublished}
+                        onChange={(e) => setToken(key, e.target.value)}
+                        style={{ width: "100%", padding: "6px 8px", fontSize: "13px", border: "1px solid #d1d5db", borderRadius: "4px", backgroundColor: "#fff", marginBottom: "10px", boxSizing: "border-box" }}
+                      >
+                        <option value="">— inherit from tutorial theme —</option>
+                        {options.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    )}
+                    {type === "bool" && (
+                      <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: isPublished ? "not-allowed" : "pointer", marginBottom: "10px", fontSize: "13px" }}>
+                        <input
+                          type="checkbox"
+                          checked={key in draftTokens ? !!draftTokens[key] : !!THEME_TOKEN_DEFAULTS[key]}
+                          disabled={isPublished}
+                          onChange={(e) => setToken(key, e.target.checked)}
+                        />
+                        {label}
+                      </label>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -2187,12 +2172,6 @@ export default function TutorialEditorPage() {
               onSlidePatch={(updates) => handleSlidePatch(activeSlide.slideId, updates)}
             />
 
-            {/* Per-slide theme override */}
-            <SlideThemeOverrideEditor
-              slide={activeSlide}
-              isPublished={isPublished}
-              onSlidePatch={(updates) => handleSlidePatch(activeSlide.slideId, updates)}
-            />
 
             {/* done Editing Button */}
             <div style={styles.doneButtonContainer}>

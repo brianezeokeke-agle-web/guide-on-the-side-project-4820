@@ -29,9 +29,10 @@ export default function CertificateVerifyPage() {
       <main style={styles.main}>
         <h1 style={styles.pageTitle}>Verify certificate ID</h1>
         <p style={styles.lead}>
-          Enter the <strong>Certificate ID</strong> exactly as shown on the student&apos;s PDF (under
-          &ldquo;Certificate ID:&rdquo;). The result shows whether that ID exists in the certificate
-          records. The student&apos;s name is not shown here.
+          Enter the <strong>Certificate ID</strong> exactly as shown on the PDF (under
+          &ldquo;Certificate ID:&rdquo;). Each issued certificate has its own ID, issue time, and name on
+          file. While signed in here as staff, you will see the <strong>recipient name</strong> when the ID
+          is valid. Unauthenticated lookups only confirm validity and metadata, not the name.
         </p>
 
         <form onSubmit={handleSubmit} style={styles.form}>
@@ -70,6 +71,11 @@ export default function CertificateVerifyPage() {
               <>
                 <p style={styles.resultTitle}>This certificate ID is valid</p>
                 <ul style={styles.resultList}>
+                  {result.recipient_name ? (
+                    <li>
+                      <strong>Recipient name:</strong> {result.recipient_name}
+                    </li>
+                  ) : null}
                   <li>
                     <strong>Tutorial:</strong> {result.tutorial_title || "(untitled or removed)"}
                   </li>
@@ -79,6 +85,11 @@ export default function CertificateVerifyPage() {
                   <li>
                     <strong>Status:</strong> {result.status || "—"}
                   </li>
+                  {result.certificate_id ? (
+                    <li>
+                      <strong>Certificate ID:</strong> {result.certificate_id}
+                    </li>
+                  ) : null}
                 </ul>
               </>
             ) : (

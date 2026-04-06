@@ -137,6 +137,7 @@ describe('certificateTemplateApi', () => {
 
     expect(fetch.mock.calls[0][0]).toContain('/certificates/verify/');
     expect(fetch.mock.calls[0][0]).toContain(encodeURIComponent('uuid-here'));
+    expect(fetch.mock.calls[0][1].headers['X-WP-Nonce']).toBe(nonce);
     expect(out.valid).toBe(true);
   });
 

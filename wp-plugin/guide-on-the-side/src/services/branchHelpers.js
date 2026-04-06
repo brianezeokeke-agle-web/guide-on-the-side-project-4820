@@ -239,6 +239,51 @@ export function getFirstSlideId(slides) {
   return regular.length > 0 ? regular[0].slideId : null;
 }
 
+/**
+ * Build the history stack as if the learner had navigated forward from the first
+ * regular slide to `targetSlideId`. Used when playback starts mid-tutorial (e.g.
+ * preview with ?slide=) so "Previous" can walk back through the same path.
+ *
+ * @param {Array}  allSlides
+ * @param {string} targetSlideId
+ * @returns {string[]}  slideIds from oldest (bottom of stack) to most recent
+ */
+export function buildInitialHistoryStackForSlide(allSlides, targetSlideId) {
+  if (!allSlides?.length || !targetSlideId) return [];
+
+  const slidesById = buildSlidesById(allSlides);
+  const regularSlides = buildRegularSlideOrder(allSlides);
+  const target = slidesById[targetSlideId];
+  if (!target) return [];
+
+  if (!target.isBranchSlide) {
+    const idx = regularSlides.findIndex((s) => s.slideId === targetSlideId);
+    if (idx <= 0) return [];
+    return regularSlides.slice(0, idx).map((s) => s.slideId);
+  }
+
+  const chain = [];
+  const visited = new Set();
+  let s = target;
+  while (s) {
+    if (visited.has(s.slideId)) break;
+    visited.add(s.slideId);
+    chain.unshift(s);
+    if (!s.isBranchSlide || !s.branchParentSlideId) break;
+    s = slidesById[s.branchParentSlideId];
+  }
+
+  const root = chain[0];
+  if (!root || root.isBranchSlide) return [];
+
+  const rootIdx = regularSlides.findIndex((r) => r.slideId === root.slideId);
+  if (rootIdx < 0) return [];
+
+  const prefix = regularSlides.slice(0, rootIdx).map((r) => r.slideId);
+  const branchPrefix = chain.slice(0, -1).map((slide) => slide.slideId);
+  return [...prefix, ...branchPrefix];
+}
+
 
 // Display numbering
 /**

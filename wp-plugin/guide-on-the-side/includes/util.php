@@ -386,9 +386,10 @@ function gots_map_api_status_to_wp($api_status) {
  * convert a tutorial post to API response format
  *
  * @param WP_Post $post The tutorial post object
+ * @param bool    $enrich_media_panes When true, normalize media pane mediaType/mime/url from attachment ID (playback + editor).
  * @return array Tutorial data in API response format
  */
-function gots_format_tutorial_response($post) {
+function gots_format_tutorial_response($post, $enrich_media_panes = false) {
     // get meta values
     $description = get_post_meta($post->ID, '_gots_description', true);
     $archived = get_post_meta($post->ID, '_gots_archived', true);
@@ -401,6 +402,10 @@ function gots_format_tutorial_response($post) {
         if (is_array($decoded)) {
             $slides = $decoded;
         }
+    }
+
+    if ($enrich_media_panes) {
+        $slides = gots_enrich_slide_media_panes($slides);
     }
     
     // Format dates as ISO 8601 using LOCAL time (second param = false).
@@ -433,6 +438,74 @@ function gots_format_tutorial_response($post) {
         'slides'      => $slides,
         'theme_id'    => $raw_theme_id > 0 ? $raw_theme_id : null,
     );
+}
+
+/**
+ * Fill media pane data from the WordPress attachment so PDFs embed correctly in playback
+ * (fixes stale mediaType "file" or missing mimeType/filename in stored JSON).
+ *
+ * @param array $slides
+ * @return array
+ */
+function gots_enrich_slide_media_panes($slides) {
+    if (!is_array($slides)) {
+        return $slides;
+    }
+
+    foreach ($slides as $i => $slide) {
+        if (!is_array($slide)) {
+            continue;
+        }
+        foreach (array('leftPane', 'rightPane') as $pk) {
+            if (empty($slides[$i][$pk]) || !is_array($slides[$i][$pk])) {
+                continue;
+            }
+            if (($slides[$i][$pk]['type'] ?? '') !== 'media') {
+                continue;
+            }
+            $data = isset($slides[$i][$pk]['data']) && is_array($slides[$i][$pk]['data']) ? $slides[$i][$pk]['data'] : array();
+            $aid  = isset($data['attachmentId']) ? absint($data['attachmentId']) : 0;
+            if ($aid < 1 || ! get_post($aid)) {
+                continue;
+            }
+
+            $mime = get_post_mime_type($aid);
+            if ($mime) {
+                $data['mimeType'] = $mime;
+            }
+            $m = strtolower((string) $mime);
+            if ($m === 'application/pdf' || $m === 'application/x-pdf') {
+                $data['mediaType'] = 'pdf';
+            } elseif (strpos($m, 'audio/') === 0) {
+                $data['mediaType'] = 'audio';
+            } elseif (strpos($m, 'video/') === 0) {
+                $data['mediaType'] = 'video';
+            } elseif (strpos($m, 'image/') === 0) {
+                $data['mediaType'] = 'image';
+            }
+
+            $path = get_attached_file($aid);
+            if ($path && is_string($path)) {
+                $b = basename($path);
+                if ($b !== '') {
+                    $data['filename'] = $b;
+                }
+            }
+            if (empty($data['originalName'])) {
+                $att = get_post($aid);
+                if ($att && $att->post_title !== '') {
+                    $data['originalName'] = $att->post_title;
+                }
+            }
+            $url = wp_get_attachment_url($aid);
+            if ($url) {
+                $data['url'] = $url;
+            }
+            $slides[$i][$pk]['data'] = $data;
+        }
+    }
+
+    return $slides;
 }
 
 /**
@@ -671,7 +744,9 @@ function gots_sanitize_slide_theme_override($override) {
 /**
  * Sanitize a slide-level layoutOverride object.
  *
- * Shape when active: { enabled: true, leftPaneRatio: <int 10-50> }
+ * Shape when active: { enabled: true, leftPaneRatio: <int 10-50> [, allowStudentResize: true] [, paneRatioCustomized: false] }
+ * When paneRatioCustomized is false, the slide does not pin a custom ratio — playback follows tutorial-wide layout (leftPaneRatio is stored but ignored for layout resolution).
+ * When allowStudentResize is true, viewers may change the split for their session.
  * Returns null if input is null, disabled, or ratio is out of range.
  *
  * Valid range for leftPaneRatio is 10–50 inclusive (mirrors frontend validation).
@@ -704,10 +779,20 @@ function gots_sanitize_layout_override($override) {
         return null;
     }
 
-    return array(
+    $out = array(
         'enabled'       => true,
         'leftPaneRatio' => $ratio,
     );
+
+    if (!empty($override['allowStudentResize'])) {
+        $out['allowStudentResize'] = true;
+    }
+
+    if (array_key_exists('paneRatioCustomized', $override) && $override['paneRatioCustomized'] === false) {
+        $out['paneRatioCustomized'] = false;
+    }
+
+    return $out;
 }
 
 /**

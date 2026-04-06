@@ -8,6 +8,7 @@ import {
   evaluateBranchMatch,
   getNextSlideId,
   getFirstSlideId,
+  buildInitialHistoryStackForSlide,
   getDisplaySlideNumber,
   validateBranchConfig,
 } from './branchHelpers';
@@ -667,6 +668,40 @@ describe('getFirstSlideId', () => {
 
   test('returns null when all slides are branch slides', () => {
     expect(getFirstSlideId([branchOptionA, branchGeneric])).toBeNull();
+  });
+});
+
+
+describe('buildInitialHistoryStackForSlide', () => {
+  test('returns empty for empty slides or missing target', () => {
+    expect(buildInitialHistoryStackForSlide([], 's1')).toEqual([]);
+    expect(buildInitialHistoryStackForSlide(allSlides, '')).toEqual([]);
+    expect(buildInitialHistoryStackForSlide(allSlides, null)).toEqual([]);
+  });
+
+  test('returns empty for unknown slide id', () => {
+    expect(buildInitialHistoryStackForSlide(allSlides, 'nope')).toEqual([]);
+  });
+
+  test('first regular slide has no prior history', () => {
+    expect(buildInitialHistoryStackForSlide(allSlides, 's1')).toEqual([]);
+  });
+
+  test('second regular slide stacks the first', () => {
+    expect(buildInitialHistoryStackForSlide(allSlides, 's2')).toEqual(['s1']);
+  });
+
+  test('third regular slide stacks prior regular slides', () => {
+    expect(buildInitialHistoryStackForSlide(allSlides, 's3')).toEqual(['s1', 's2']);
+  });
+
+  test('branch slide stacks regular prefix and branch ancestors', () => {
+    expect(buildInitialHistoryStackForSlide(allSlides, 'b1')).toEqual(['s1']);
+  });
+
+  test('nested branch includes parent branch slide', () => {
+    const slides = [...allSlides, nestedBranch];
+    expect(buildInitialHistoryStackForSlide(slides, 'n1')).toEqual(['s1', 'b1']);
   });
 });
 

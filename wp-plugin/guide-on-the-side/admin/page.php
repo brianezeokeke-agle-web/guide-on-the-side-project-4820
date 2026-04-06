@@ -67,6 +67,14 @@ if (!defined('ABSPATH')) {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        /*
+         * Full-height editor fills #wpcontent; the default WP admin footer
+         * ("Thank you for creating…" / version) can sit on top of slide controls.
+         */
+        body.toplevel_page_gots-admin #wpfooter {
+            display: none !important;
+        }
     </style>
     
     <div id="gots-root">

@@ -17,14 +17,10 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-// ─── DB version ──────────────────────────────────────────────────────────────
-
 define('GOTS_CERT_DB_VERSION', '1.1.0');
 
-/** Download token TTL in seconds (24 hours). */
 define('GOTS_CERT_DOWNLOAD_TTL', DAY_IN_SECONDS);
 
-/** Completion proof TTL in seconds (60 minutes). */
 define('GOTS_CERT_PROOF_TTL', 60 * MINUTE_IN_SECONDS);
 
 /**
@@ -90,7 +86,7 @@ function gots_maybe_create_certificates_table() {
 }
 add_action('admin_init', 'gots_maybe_create_certificates_table');
 
-// ─── HMAC signing helpers ─────────────────────────────────────────────────────
+// HMAC signing helpers
 
 /**
  * Return the plugin-specific signing secret derived from WP AUTH_KEY.
@@ -129,7 +125,7 @@ function gots_cert_base64url_decode($data) {
     return base64_decode($data, true);
 }
 
-// ─── Completion-proof helpers ─────────────────────────────────────────────────
+// Completion-proof helpers
 
 /**
  * Generate a short-lived, signed completion-proof token for a tutorial.
@@ -208,7 +204,7 @@ function gots_validate_completion_proof($token, $tutorial_id) {
     return $payload;
 }
 
-// ─── Signed download URL helpers ─────────────────────────────────────────────
+// Signed download URL helpers
 
 /**
  * Generate a signed, time-limited download token for an issued certificate.
@@ -323,7 +319,7 @@ function gots_rerender_certificate_pdf_bytes($cert) {
     return gots_render_pdf($html, array('paper_size' => 'letter', 'orientation' => 'landscape'));
 }
 
-// ─── Rate limiting ────────────────────────────────────────────────────────────
+// Rate limiting
 
 /** Max successful new certificate issuances per IP per tutorial per hour (abuse protection). */
 define('GOTS_CERT_ISSUE_RATE_LIMIT_MAX', 25);
@@ -393,7 +389,7 @@ function gots_check_idempotency_key($idempotency_key) {
     return true;
 }
 
-// ─── Student identifier ───────────────────────────────────────────────────────
+// Student identifier
 
 /**
  * Build a hashed, anonymous student identifier for the current request.
@@ -456,7 +452,7 @@ function gots_get_client_ip() {
     return '0.0.0.0';
 }
 
-// ─── Issuance ─────────────────────────────────────────────────────────────────
+// Issuance
 
 /**
  * Issue a certificate for a student who has completed a tutorial.
@@ -511,11 +507,13 @@ function gots_issue_certificate($tutorial_id, $recipient_name, $completion_proof
         return new WP_Error('cert_disabled', 'Certificates are not enabled for this tutorial.', array('status' => 403));
     }
 
-    // 5. Existing certificate for this student + tutorial — return without consuming rate limit
+    // 5. Existing active certificate for this student + tutorial — return without consuming rate limit.
+    // Rows with status != 'issued' (e.g. revoked) must NOT be reused here: download validation only
+    // accepts 'issued', otherwise the client gets a link that fails with "Certificate not found."
     $table    = $wpdb->prefix . 'gots_certificates';
     $existing = $wpdb->get_row($wpdb->prepare(
         "SELECT id, verification_token FROM $table
-         WHERE tutorial_id = %d AND student_identifier_hash = %s
+         WHERE tutorial_id = %d AND student_identifier_hash = %s AND status = 'issued'
          ORDER BY issued_at DESC LIMIT 1",
         $tutorial_id,
         $student_id
@@ -594,27 +592,67 @@ function gots_issue_certificate($tutorial_id, $recipient_name, $completion_proof
     );
 
     if (!$inserted) {
-        @unlink($upload['path']);
-        // If a concurrent request raced us to the insert (duplicate student+tutorial), return
-        // the certificate that was just created rather than surfacing a DB error.
+        // Duplicate student+tutorial: either a concurrent issue won the race, or a revoked row
+        // still occupies the unique key — handle both without deleting the new PDF until we know.
         if (strpos($wpdb->last_error, 'Duplicate entry') !== false) {
-            $race_existing = $wpdb->get_row($wpdb->prepare(
-                "SELECT id, verification_token FROM $table
+            $dup = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM $table
                  WHERE tutorial_id = %d AND student_identifier_hash = %s
                  ORDER BY issued_at DESC LIMIT 1",
                 $tutorial_id,
                 $student_id
             ), OBJECT);
-            if ($race_existing) {
-                $dl       = gots_generate_download_token($race_existing->id);
+            if ($dup && $dup->status === 'issued') {
+                @unlink($upload['path']);
+                $dl       = gots_generate_download_token((int) $dup->id);
                 $rest_url = rest_url('gots/v1/certificates/' . urlencode($dl['token']) . '/download');
                 return array(
-                    'certificateId' => (int) $race_existing->id,
+                    'certificateId' => (int) $dup->id,
+                    'downloadUrl'   => $rest_url,
+                    'expiresAt'     => $dl['expires_at'],
+                );
+            }
+            if ($dup && $dup->status !== 'issued') {
+                // Update DB first; only delete the old PDF file after confirming the row is saved.
+                // If we deleted it first and the update failed, the old PDF would be gone but
+                // the row would still show a non-issued status — leaving a broken state.
+                $old_pdf_path = (!empty($dup->pdf_path) && is_string($dup->pdf_path)) ? $dup->pdf_path : '';
+                $updated = $wpdb->update(
+                    $table,
+                    array(
+                        'template_id'             => (int) ($template->id ?? 0),
+                        'recipient_name'          => $recipient_name,
+                        'verification_token'      => $verification_token,
+                        'pdf_path'                => $upload['path'],
+                        'issued_by'               => $issued_by,
+                        'issued_at'               => current_time('mysql'),
+                        'status'                  => 'issued',
+                        'download_count'          => 0,
+                    ),
+                    array('id' => (int) $dup->id),
+                    array('%d', '%s', '%s', '%s', '%s', '%s', '%s', '%d'),
+                    array('%d')
+                );
+                if ($updated === false) {
+                    @unlink($upload['path']);
+                    error_log('[GOTS Cert] Re-issue after duplicate failed: ' . $wpdb->last_error);
+                    return new WP_Error('db_error', 'Could not save certificate record.', array('status' => 500));
+                }
+                if ($old_pdf_path !== '' && file_exists($old_pdf_path)) {
+                    @unlink($old_pdf_path);
+                }
+                gots_certificate_rate_limit_record_success($tutorial_id, $ip);
+                $cert_id  = (int) $dup->id;
+                $dl       = gots_generate_download_token($cert_id);
+                $rest_url = rest_url('gots/v1/certificates/' . urlencode($dl['token']) . '/download');
+                return array(
+                    'certificateId' => $cert_id,
                     'downloadUrl'   => $rest_url,
                     'expiresAt'     => $dl['expires_at'],
                 );
             }
         }
+        @unlink($upload['path']);
         error_log('[GOTS Cert] DB insert failed: ' . $wpdb->last_error);
         return new WP_Error('db_error', 'Could not save certificate record.', array('status' => 500));
     }
@@ -634,7 +672,7 @@ function gots_issue_certificate($tutorial_id, $recipient_name, $completion_proof
     );
 }
 
-// ─── Download streaming ───────────────────────────────────────────────────────
+// Download streaming
 
 /**
  * Stream a certificate PDF to the browser.
@@ -690,7 +728,7 @@ function gots_stream_certificate_pdf($token) {
  * Look up a certificate row by the verification_token (Certificate ID on the PDF).
  *
  * @param string $token
- * @return object|null  { id, tutorial_id, issued_at, status } or null
+ * @return object|null  { id, tutorial_id, issued_at, status, recipient_name } or null
  */
 function gots_lookup_certificate_by_verification_token($token) {
     global $wpdb;
@@ -702,14 +740,14 @@ function gots_lookup_certificate_by_verification_token($token) {
 
     $table = $wpdb->prefix . 'gots_certificates';
     $row   = $wpdb->get_row($wpdb->prepare(
-        "SELECT id, tutorial_id, issued_at, status FROM $table WHERE verification_token = %s LIMIT 1",
+        "SELECT id, tutorial_id, issued_at, status, recipient_name FROM $table WHERE verification_token = %s LIMIT 1",
         $token
     ), OBJECT);
 
     return $row ?: null;
 }
 
-// ─── Orphan cleanup ───────────────────────────────────────────────────────────
+// Orphan cleanup
 
 /**
  * Mark all certificates for a deleted tutorial as 'revoked' so they can no
@@ -735,7 +773,7 @@ function gots_cleanup_tutorial_certificates($post_id) {
 }
 add_action('delete_post', 'gots_cleanup_tutorial_certificates');
 
-// ─── Admin query helpers ──────────────────────────────────────────────────────
+// Admin query helpers
 
 /**
  * List issued certificates for a tutorial.

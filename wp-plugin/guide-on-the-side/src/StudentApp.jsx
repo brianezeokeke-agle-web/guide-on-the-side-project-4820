@@ -89,8 +89,6 @@ export default function StudentApp() {
   const [certDownloadUrl, setCertDownloadUrl] = useState(null);
   // Optional override of left-pane width % while viewing (session only; not saved).
   const [studentPaneRatioOverride, setStudentPaneRatioOverride] = useState(null);
-  // When the slide allows it, learner must opt in before the range control is shown.
-  const [studentPaneResizeExpanded, setStudentPaneResizeExpanded] = useState(false);
   // Stable idempotency key per completion attempt — shared across retries so the
   // server can dedupe rapid double-clicks.  Reset when the recipient name changes
   // because that constitutes a new logical issuance attempt.
@@ -205,12 +203,10 @@ export default function StudentApp() {
 
   useEffect(() => {
     setStudentPaneRatioOverride(null);
-    setStudentPaneResizeExpanded(false);
   }, [config.tutorialId]);
 
   useEffect(() => {
     setStudentPaneRatioOverride(null);
-    setStudentPaneResizeExpanded(false);
   }, [currentSlideId]);
 
   // Prefill recipient name from WP user display name (logged-in users only)
@@ -574,7 +570,6 @@ export default function StudentApp() {
               setCertDownloadUrl(null);
               setCertError(null);
               setStudentPaneRatioOverride(null);
-              setStudentPaneResizeExpanded(false);
             }}
             style={styles.restartButton}
           >
@@ -623,56 +618,6 @@ export default function StudentApp() {
               {currentSlide.title || `Slide ${progressInfo.current}`}
             </h2>
 
-            {slideAllowsStudentPaneResize ? (
-              <div className="gots-pane-ratio-toolbar">
-                <label style={styles.paneRatioToggleRow}>
-                  <input
-                    type="checkbox"
-                    checked={studentPaneResizeExpanded}
-                    onChange={(e) => {
-                      const on = e.target.checked;
-                      setStudentPaneResizeExpanded(on);
-                      if (!on) setStudentPaneRatioOverride(null);
-                    }}
-                    style={styles.paneRatioToggleInput}
-                  />
-                  <span>Adjust left / right pane width</span>
-                </label>
-                {studentPaneResizeExpanded ? (
-                  <div className="gots-pane-ratio-slider-row">
-                    <input
-                      id="gots-pane-ratio-slider"
-                      type="range"
-                      min={LAYOUT_MIN_LEFT_RATIO}
-                      max={LAYOUT_MAX_LEFT_RATIO}
-                      value={displayPaneRatio}
-                      onChange={(e) => setStudentPaneRatioOverride(Number(e.target.value))}
-                      style={{
-                        ...styles.paneRatioRange,
-                        accentColor: effectiveTokens.primaryColor || "#7B2D26",
-                      }}
-                      aria-valuemin={LAYOUT_MIN_LEFT_RATIO}
-                      aria-valuemax={LAYOUT_MAX_LEFT_RATIO}
-                      aria-valuenow={displayPaneRatio}
-                      aria-valuetext={`Left ${displayPaneRatio} percent, right ${100 - displayPaneRatio} percent`}
-                    />
-                    <span style={styles.paneRatioReadout}>
-                      Left {displayPaneRatio}% · Right {100 - displayPaneRatio}%
-                    </span>
-                    {studentPaneRatioOverride !== null ? (
-                      <button
-                        type="button"
-                        onClick={() => setStudentPaneRatioOverride(null)}
-                        style={styles.paneRatioReset}
-                      >
-                        Reset to default
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
             <div
               className="gots-panes-grid"
               style={{
@@ -715,6 +660,36 @@ export default function StudentApp() {
           </button>
         ) : (
           <div style={{ width: "100px" }} />
+        )}
+
+        {slideAllowsStudentPaneResize && (
+          <div style={styles.footerSliderRow}>
+            <input
+              id="gots-pane-ratio-slider"
+              type="range"
+              min={LAYOUT_MIN_LEFT_RATIO}
+              max={LAYOUT_MAX_LEFT_RATIO}
+              value={displayPaneRatio}
+              onChange={(e) => setStudentPaneRatioOverride(Number(e.target.value))}
+              style={{
+                ...styles.paneRatioRange,
+                accentColor: effectiveTokens.primaryColor || "#7B2D26",
+              }}
+              aria-valuemin={LAYOUT_MIN_LEFT_RATIO}
+              aria-valuemax={LAYOUT_MAX_LEFT_RATIO}
+              aria-valuenow={displayPaneRatio}
+              aria-valuetext={`Left ${displayPaneRatio} percent, right ${100 - displayPaneRatio} percent`}
+            />
+            {studentPaneRatioOverride !== null ? (
+              <button
+                type="button"
+                onClick={() => setStudentPaneRatioOverride(null)}
+                style={styles.paneRatioReset}
+              >
+                Reset
+              </button>
+            ) : null}
+          </div>
         )}
 
         <button
@@ -1141,34 +1116,22 @@ const styles = {
     color: "#111827",
     marginBottom: "24px",
   },
-  paneRatioToggleRow: {
+  footerSliderRow: {
     display: "flex",
     alignItems: "center",
     gap: "10px",
-    fontSize: "14px",
-    fontWeight: "500",
-    color: "#374151",
-    cursor: "pointer",
-    userSelect: "none",
-  },
-  paneRatioToggleInput: {
-    width: "18px",
-    height: "18px",
-    accentColor: "#7B2D26",
-    cursor: "pointer",
-    flexShrink: 0,
+    flex: "1 1 0",
+    maxWidth: "400px",
+    margin: "0 16px",
+    overflow: "visible",
+    padding: "8px 0",
   },
   paneRatioRange: {
     flex: "1 1 140px",
     minWidth: "120px",
     maxWidth: "320px",
-    height: "8px",
     cursor: "pointer",
-  },
-  paneRatioReadout: {
-    fontSize: "13px",
-    color: "#6b7280",
-    whiteSpace: "nowrap",
+    overflow: "visible",
   },
   paneRatioReset: {
     fontSize: "13px",
@@ -1340,6 +1303,7 @@ const styles = {
     padding: "16px 24px",
     backgroundColor: "white",
     borderTop: "1px solid #e5e7eb",
+    overflow: "visible",
   },
   navButton: {
     padding: "12px 24px",

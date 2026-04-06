@@ -17,14 +17,10 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-// ─── DB version ──────────────────────────────────────────────────────────────
-
 define('GOTS_CERT_DB_VERSION', '1.1.0');
 
-/** Download token TTL in seconds (24 hours). */
 define('GOTS_CERT_DOWNLOAD_TTL', DAY_IN_SECONDS);
 
-/** Completion proof TTL in seconds (60 minutes). */
 define('GOTS_CERT_PROOF_TTL', 60 * MINUTE_IN_SECONDS);
 
 /**
@@ -90,7 +86,7 @@ function gots_maybe_create_certificates_table() {
 }
 add_action('admin_init', 'gots_maybe_create_certificates_table');
 
-// ─── HMAC signing helpers ─────────────────────────────────────────────────────
+// HMAC signing helpers
 
 /**
  * Return the plugin-specific signing secret derived from WP AUTH_KEY.
@@ -129,7 +125,7 @@ function gots_cert_base64url_decode($data) {
     return base64_decode($data, true);
 }
 
-// ─── Completion-proof helpers ─────────────────────────────────────────────────
+// Completion-proof helpers
 
 /**
  * Generate a short-lived, signed completion-proof token for a tutorial.
@@ -208,7 +204,7 @@ function gots_validate_completion_proof($token, $tutorial_id) {
     return $payload;
 }
 
-// ─── Signed download URL helpers ─────────────────────────────────────────────
+// Signed download URL helpers
 
 /**
  * Generate a signed, time-limited download token for an issued certificate.
@@ -323,7 +319,7 @@ function gots_rerender_certificate_pdf_bytes($cert) {
     return gots_render_pdf($html, array('paper_size' => 'letter', 'orientation' => 'landscape'));
 }
 
-// ─── Rate limiting ────────────────────────────────────────────────────────────
+// Rate limiting
 
 /** Max successful new certificate issuances per IP per tutorial per hour (abuse protection). */
 define('GOTS_CERT_ISSUE_RATE_LIMIT_MAX', 25);
@@ -393,7 +389,7 @@ function gots_check_idempotency_key($idempotency_key) {
     return true;
 }
 
-// ─── Student identifier ───────────────────────────────────────────────────────
+// Student identifier
 
 /**
  * Build a hashed, anonymous student identifier for the current request.
@@ -456,7 +452,7 @@ function gots_get_client_ip() {
     return '0.0.0.0';
 }
 
-// ─── Issuance ─────────────────────────────────────────────────────────────────
+// Issuance
 
 /**
  * Issue a certificate for a student who has completed a tutorial.
@@ -676,7 +672,7 @@ function gots_issue_certificate($tutorial_id, $recipient_name, $completion_proof
     );
 }
 
-// ─── Download streaming ───────────────────────────────────────────────────────
+// Download streaming
 
 /**
  * Stream a certificate PDF to the browser.
@@ -751,7 +747,7 @@ function gots_lookup_certificate_by_verification_token($token) {
     return $row ?: null;
 }
 
-// ─── Orphan cleanup ───────────────────────────────────────────────────────────
+// Orphan cleanup
 
 /**
  * Mark all certificates for a deleted tutorial as 'revoked' so they can no
@@ -777,7 +773,7 @@ function gots_cleanup_tutorial_certificates($post_id) {
 }
 add_action('delete_post', 'gots_cleanup_tutorial_certificates');
 
-// ─── Admin query helpers ──────────────────────────────────────────────────────
+// Admin query helpers
 
 /**
  * List issued certificates for a tutorial.

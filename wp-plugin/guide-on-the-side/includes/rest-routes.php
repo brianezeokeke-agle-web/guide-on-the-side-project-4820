@@ -101,7 +101,7 @@ function gots_register_rest_routes() {
         ),
     ));
 
-    // ── Certificate endpoints ──────────────────────────────────────────────────
+    // Certificate endpoints
 
     // POST /generate-certificate - generate and return a PDF certificate (legacy, admin-only)
     register_rest_route($namespace, '/generate-certificate', array(
@@ -1282,7 +1282,7 @@ function gots_rest_get_analytics_slides($request) {
     return rest_ensure_response($slides);
 }
 
-// ── Certificate REST callbacks ─────────────────────────────────────────────────
+// Certificate REST callbacks
 
 /**
  * POST /tutorials/{id}/certificate/completion-proof
@@ -1487,7 +1487,7 @@ function gots_rest_verify_certificate($request) {
     return rest_ensure_response($payload);
 }
 
-// ── Admin certificate template REST callbacks ──────────────────────────────────
+// Admin certificate template REST callbacks
 
 /**
  * GET /certificate-templates

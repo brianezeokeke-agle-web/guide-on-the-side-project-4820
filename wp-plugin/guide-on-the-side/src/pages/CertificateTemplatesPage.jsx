@@ -105,8 +105,8 @@ export default function CertificateTemplatesPage() {
   }
 
   async function handleSave() {
-    if (!form.name.trim()) {
-      setSaveError("Template name is required.");
+    if (!form.config_json.title?.trim()) {
+      setSaveError("Title is required.");
       return;
     }
     setSaving(true);
@@ -269,7 +269,7 @@ export default function CertificateTemplatesPage() {
               {saveError && <div style={styles.errorBanner}>{saveError}</div>}
 
               {/* Name */}
-              <label style={styles.fieldLabel}>Template Name *</label>
+              <label style={styles.fieldLabel}>Template Name</label>
               <input
                 type="text"
                 value={form.name}
@@ -293,7 +293,7 @@ export default function CertificateTemplatesPage() {
               <label style={styles.fieldLabel}>School / library logo</label>
               <div style={{ marginBottom: "12px", display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
                 <button type="button" onClick={handlePickLogo} style={styles.editButton}>
-                  {form.logo_media_id ? "Change logo…" : "Choose image (JPG, PNG, GIF)…"}
+                  {form.logo_media_id ? "Change logo…" : "Choose image (JPG, PNG, GIF, WebP)…"}
                 </button>
                 {form.logo_media_id ? (
                   <>
@@ -311,10 +311,10 @@ export default function CertificateTemplatesPage() {
               {form.layout_type !== "custom_html" && (
                 <>
                   {[
-                    { key: "title",           label: "Title" },
+                    { key: "title",           label: "Title *" },
                     { key: "subtitle",        label: "Subtitle" },
                     { key: "issuer_name",     label: "Issuer Name" },
-                    { key: "signature_label", label: "Signature Label" },
+                    { key: "signature_label", label: "Instructor/Teacher" },
                   ].map(({ key, label }) => (
                     <div key={key}>
                       <label style={styles.fieldLabel}>{label}</label>
@@ -405,7 +405,7 @@ export default function CertificateTemplatesPage() {
                         checked={!!form.config_json.show_seal}
                         onChange={(e) => setConfigField("show_seal", e.target.checked)}
                       />
-                      Show Seal
+                      Show Logo
                     </label>
                     <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: form.is_default && editingId ? "not-allowed" : "pointer" }}>
                       <input

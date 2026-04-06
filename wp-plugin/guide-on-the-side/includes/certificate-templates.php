@@ -17,8 +17,6 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-// ─── DB version ──────────────────────────────────────────────────────────────
-
 define('GOTS_CERT_TMPL_DB_VERSION', '1.0.0');
 
 /**
@@ -64,7 +62,7 @@ function gots_maybe_create_certificate_templates_table() {
 }
 add_action('admin_init', 'gots_maybe_create_certificate_templates_table');
 
-// ─── Preset constants ─────────────────────────────────────────────────────────
+// Preset constants
 
 /** Supported layout preset types. */
 define('GOTS_CERT_PRESETS', array('classic', 'minimal', 'formal', 'custom_html'));
@@ -125,7 +123,7 @@ function gots_sanitize_certificate_logo_media_id($value) {
     return $id;
 }
 
-// ─── Validation ───────────────────────────────────────────────────────────────
+// Validation
 
 /**
  * Validate and sanitize template input data from a REST request.
@@ -324,7 +322,7 @@ function gots_generate_template_slug($base) {
     return $candidate;
 }
 
-// ─── Template CRUD ────────────────────────────────────────────────────────────
+// Template CRUD
 
 /**
  * List all active certificate templates.
@@ -551,7 +549,7 @@ function gots_get_tutorials_using_template($template_id) {
     return $results;
 }
 
-// ─── Tutorial linkage ─────────────────────────────────────────────────────────
+// Tutorial linkage
 
 /**
  * Resolve the effective template for a tutorial.
@@ -748,7 +746,7 @@ function gots_render_custom_certificate_document($inner_html, $values, $cfg) {
         . '</body></html>';
 }
 
-// ─── Placeholder merge ────────────────────────────────────────────────────────
+// Placeholder merge
 
 /**
  * Merge placeholders into a text string.
@@ -768,7 +766,7 @@ function gots_merge_placeholders($text, $values) {
     return $text;
 }
 
-// ─── HTML generation ──────────────────────────────────────────────────────────
+// HTML generation
 
 /**
  * Produce the sanitized, rendered HTML for a certificate preset.
@@ -830,7 +828,7 @@ function gots_render_certificate_html($template, $values) {
         $logo_path = get_attached_file($template->logo_media_id);
         if ($logo_path && file_exists($logo_path)) {
             $mime = mime_content_type($logo_path);
-            if (in_array($mime, array('image/jpeg', 'image/png', 'image/gif'), true)) {
+            if (in_array($mime, array('image/jpeg', 'image/png', 'image/gif', 'image/webp'), true)) {
                 $b64 = base64_encode(file_get_contents($logo_path));
                 $logo_html = '<img src="data:' . $mime . ';base64,' . $b64
                     . '" style="max-height:0.7in;max-width:2.5in;" alt="Logo" />';

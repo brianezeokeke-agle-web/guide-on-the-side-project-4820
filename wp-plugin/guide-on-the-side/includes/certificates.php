@@ -617,9 +617,10 @@ function gots_issue_certificate($tutorial_id, $recipient_name, $completion_proof
                 );
             }
             if ($dup && $dup->status !== 'issued') {
-                if (!empty($dup->pdf_path) && is_string($dup->pdf_path) && file_exists($dup->pdf_path)) {
-                    @unlink($dup->pdf_path);
-                }
+                // Update DB first; only delete the old PDF file after confirming the row is saved.
+                // If we deleted it first and the update failed, the old PDF would be gone but
+                // the row would still show a non-issued status — leaving a broken state.
+                $old_pdf_path = (!empty($dup->pdf_path) && is_string($dup->pdf_path)) ? $dup->pdf_path : '';
                 $updated = $wpdb->update(
                     $table,
                     array(
@@ -640,6 +641,9 @@ function gots_issue_certificate($tutorial_id, $recipient_name, $completion_proof
                     @unlink($upload['path']);
                     error_log('[GOTS Cert] Re-issue after duplicate failed: ' . $wpdb->last_error);
                     return new WP_Error('db_error', 'Could not save certificate record.', array('status' => 500));
+                }
+                if ($old_pdf_path !== '' && file_exists($old_pdf_path)) {
+                    @unlink($old_pdf_path);
                 }
                 gots_certificate_rate_limit_record_success($tutorial_id, $ip);
                 $cert_id  = (int) $dup->id;

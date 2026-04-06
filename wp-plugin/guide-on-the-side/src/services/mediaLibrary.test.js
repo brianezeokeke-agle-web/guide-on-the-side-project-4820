@@ -8,6 +8,7 @@ import {
   selectVideo,
   selectMedia,
   isMediaLibraryAvailable,
+  isPdfMediaData,
 } from './mediaLibrary';
 
 describe('Media Library Service (WordPress)', () => {
@@ -102,6 +103,7 @@ describe('Media Library Service (WordPress)', () => {
       altText: 'Image Title',
       filename: 'image.jpg',
       originalName: 'Image Title',
+      mimeType: '',
     });
   });
 
@@ -250,6 +252,7 @@ describe('Media Library Service (WordPress)', () => {
       altText: 'Clip Title',
       filename: 'clip.mp4',
       originalName: 'Clip Title',
+      mimeType: '',
     });
   });
 
@@ -411,11 +414,12 @@ describe('Media Library Service (WordPress)', () => {
 
   // --- formatAttachment edge cases ---
 
-  // Verify that an unrecognized attachment type (e.g. audio) sets mediaType to null
-  test('formatAttachment should set mediaType to null for unknown types', async () => {
+  // Verify that audio attachments are classified as 'audio'
+  test('formatAttachment should set mediaType to audio for audio type', async () => {
     const mockAttachment = {
       id: 600,
-      type: 'audio', // not image or video
+      type: 'audio',
+      mime: 'audio/mpeg',
       url: 'https://example.com/track.mp3',
       title: 'Audio Track',
       filename: 'track.mp3',
@@ -439,8 +443,74 @@ describe('Media Library Service (WordPress)', () => {
     mockFrame._selectCallback();
     const result = await promise;
 
-    expect(result.mediaType).toBeNull();
+    expect(result.mediaType).toBe('audio');
+    expect(result.mimeType).toBe('audio/mpeg');
     expect(result.attachmentId).toBe(600);
+  });
+
+  // Verify that PDF attachments are classified as 'pdf' via mime type
+  test('formatAttachment should set mediaType to pdf for application/pdf', async () => {
+    const mockAttachment = {
+      id: 601,
+      type: 'application',
+      mime: 'application/pdf',
+      url: 'https://example.com/doc.pdf',
+      title: 'My Document',
+      filename: 'doc.pdf',
+    };
+
+    const mockFrame = {
+      open: jest.fn(),
+      on: jest.fn((event, callback) => {
+        if (event === 'select') mockFrame._selectCallback = callback;
+      }),
+      state: jest.fn(() => ({
+        get: jest.fn(() => ({
+          first: jest.fn(() => ({ toJSON: () => mockAttachment }))
+        }))
+      }))
+    };
+
+    global.wp = { media: jest.fn(() => mockFrame) };
+
+    const promise = openMediaLibrary();
+    mockFrame._selectCallback();
+    const result = await promise;
+
+    expect(result.mediaType).toBe('pdf');
+    expect(result.mimeType).toBe('application/pdf');
+  });
+
+  // Verify truly unknown types (e.g. Word doc) fall back to 'file'
+  test('formatAttachment should set mediaType to file for unrecognized types', async () => {
+    const mockAttachment = {
+      id: 602,
+      type: 'application',
+      mime: 'application/msword',
+      url: 'https://example.com/report.doc',
+      title: 'Report',
+      filename: 'report.doc',
+    };
+
+    const mockFrame = {
+      open: jest.fn(),
+      on: jest.fn((event, callback) => {
+        if (event === 'select') mockFrame._selectCallback = callback;
+      }),
+      state: jest.fn(() => ({
+        get: jest.fn(() => ({
+          first: jest.fn(() => ({ toJSON: () => mockAttachment }))
+        }))
+      }))
+    };
+
+    global.wp = { media: jest.fn(() => mockFrame) };
+
+    const promise = openMediaLibrary();
+    mockFrame._selectCallback();
+    const result = await promise;
+
+    expect(result.mediaType).toBe('file');
   });
 
   // Verify fallback values when alt, title, and filename are all missing
@@ -473,5 +543,85 @@ describe('Media Library Service (WordPress)', () => {
     expect(result.altText).toBe('');
     expect(result.filename).toBe('');
     expect(result.originalName).toBe('');
+  });
+});
+
+
+// isPdfMediaData
+
+describe('isPdfMediaData', () => {
+  test('returns false for null', () => {
+    expect(isPdfMediaData(null)).toBe(false);
+  });
+
+  test('returns false for undefined', () => {
+    expect(isPdfMediaData(undefined)).toBe(false);
+  });
+
+  test('returns false when data has no url', () => {
+    expect(isPdfMediaData({ mediaType: 'pdf' })).toBe(false);
+  });
+
+  test('returns false when url is empty string', () => {
+    expect(isPdfMediaData({ url: '', mediaType: 'pdf' })).toBe(false);
+  });
+
+  test('returns true when mediaType is pdf', () => {
+    expect(isPdfMediaData({ url: 'https://example.com/file', mediaType: 'pdf' })).toBe(true);
+  });
+
+  test('returns true when mimeType is application/pdf', () => {
+    expect(isPdfMediaData({ url: 'https://example.com/file', mimeType: 'application/pdf' })).toBe(true);
+  });
+
+  test('returns true when mimeType is application/x-pdf', () => {
+    expect(isPdfMediaData({ url: 'https://example.com/file', mimeType: 'application/x-pdf' })).toBe(true);
+  });
+
+  test('mimeType check is case-insensitive', () => {
+    expect(isPdfMediaData({ url: 'https://example.com/file', mimeType: 'Application/PDF' })).toBe(true);
+  });
+
+  test('returns true when url contains .pdf', () => {
+    expect(isPdfMediaData({ url: 'https://example.com/report.pdf' })).toBe(true);
+  });
+
+  test('url check is case-insensitive', () => {
+    expect(isPdfMediaData({ url: 'https://example.com/REPORT.PDF' })).toBe(true);
+  });
+
+  test('returns true when filename contains .pdf', () => {
+    expect(isPdfMediaData({ url: 'https://example.com/file', filename: 'chapter1.pdf' })).toBe(true);
+  });
+
+  test('returns true when originalName contains .pdf', () => {
+    expect(isPdfMediaData({ url: 'https://example.com/file', originalName: 'Thesis.pdf' })).toBe(true);
+  });
+
+  test('returns false for an image with no pdf indicators', () => {
+    expect(isPdfMediaData({
+      url: 'https://example.com/photo.jpg',
+      mediaType: 'image',
+      mimeType: 'image/jpeg',
+      filename: 'photo.jpg',
+    })).toBe(false);
+  });
+
+  test('returns false for an audio file with no pdf indicators', () => {
+    expect(isPdfMediaData({
+      url: 'https://example.com/track.mp3',
+      mediaType: 'audio',
+      mimeType: 'audio/mpeg',
+      filename: 'track.mp3',
+    })).toBe(false);
+  });
+
+  test('returns false for a word doc with no pdf in name', () => {
+    expect(isPdfMediaData({
+      url: 'https://example.com/report.docx',
+      mediaType: 'file',
+      mimeType: 'application/msword',
+      filename: 'report.docx',
+    })).toBe(false);
   });
 });

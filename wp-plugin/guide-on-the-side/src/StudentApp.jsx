@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import PdfPaneEmbed from "./components/PdfPaneEmbed";
+import { isPdfMediaData } from "./services/mediaLibrary";
 import { recordAnalyticsEvent } from "./services/analyticsApi";
 import { issueCertificate, downloadCertificate, requestCompletionProof } from "./services/certificateApi";
 import { isTextAnswerCorrect } from "./services/slideValidation";
@@ -21,18 +22,6 @@ import {
   LAYOUT_MIN_LEFT_RATIO,
   LAYOUT_MAX_LEFT_RATIO,
 } from "./services/themeHelpers";
-
-function isPdfMediaData(data) {
-  if (!data?.url) return false;
-  if (data.mediaType === "pdf") return true;
-  const m = String(data.mimeType || "").toLowerCase();
-  if (m === "application/pdf" || m === "application/x-pdf") return true;
-  const url = String(data.url).toLowerCase();
-  if (url.includes(".pdf")) return true;
-  const names = `${data.filename || ""} ${data.originalName || ""}`.toLowerCase();
-  if (names.includes(".pdf")) return true;
-  return false;
-}
 
 /**
  * Get student configuration from WordPress
@@ -138,7 +127,7 @@ export default function StudentApp() {
 
   const slideAllowsStudentPaneResize = currentSlide?.layoutOverride?.allowStudentResize === true;
 
-  const displayPaneRatio = (() => {
+  const displayPaneRatio = useMemo(() => {
     if (!slideAllowsStudentPaneResize) {
       return effectivePaneRatio;
     }
@@ -146,7 +135,7 @@ export default function StudentApp() {
       return Math.min(LAYOUT_MAX_LEFT_RATIO, Math.max(LAYOUT_MIN_LEFT_RATIO, studentPaneRatioOverride));
     }
     return effectivePaneRatio;
-  })();
+  }, [slideAllowsStudentPaneResize, effectivePaneRatio, studentPaneRatioOverride]);
 
   //progress bar indicator 
   //show progress within regular slides only; branch slides share the root's position

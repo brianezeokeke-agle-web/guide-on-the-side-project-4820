@@ -165,10 +165,31 @@ export function isMediaLibraryAvailable() {
   return typeof wp !== 'undefined' && typeof wp.media !== 'undefined';
 }
 
+/**
+ * Detect whether a media pane data object represents a PDF file.
+ * Checks mediaType, mimeType, URL, filename, and originalName so it works
+ * whether the data was freshly selected from the media library or loaded
+ * from stored slide JSON (which may have stale/missing fields).
+ * @param {Object|null|undefined} data - Media pane data object
+ * @returns {boolean}
+ */
+export function isPdfMediaData(data) {
+  if (!data?.url) return false;
+  if (data.mediaType === 'pdf') return true;
+  const m = String(data.mimeType || '').toLowerCase();
+  if (m === 'application/pdf' || m === 'application/x-pdf') return true;
+  const url = String(data.url).toLowerCase();
+  if (url.includes('.pdf')) return true;
+  const names = `${data.filename || ''} ${data.originalName || ''}`.toLowerCase();
+  if (names.includes('.pdf')) return true;
+  return false;
+}
+
 export default {
   openMediaLibrary,
   selectImage,
   selectVideo,
   selectMedia,
   isMediaLibraryAvailable,
+  isPdfMediaData,
 };

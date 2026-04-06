@@ -105,6 +105,10 @@ export default function CertificateTemplatesPage() {
   }
 
   async function handleSave() {
+    if (!form.name.trim()) {
+      setSaveError("Template name is required.");
+      return;
+    }
     if (!form.config_json.title?.trim()) {
       setSaveError("Title is required.");
       return;
@@ -269,7 +273,7 @@ export default function CertificateTemplatesPage() {
               {saveError && <div style={styles.errorBanner}>{saveError}</div>}
 
               {/* Name */}
-              <label style={styles.fieldLabel}>Template Name</label>
+              <label style={styles.fieldLabel}>Template Name *</label>
               <input
                 type="text"
                 value={form.name}

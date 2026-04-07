@@ -63,6 +63,17 @@ async function fetchTutorial(tutorialId) {
   return response.json();
 }
 
+// Force all <a> tags inside WYSIWYG HTML to open in a new tab so
+// that author-inserted hyperlinks don't navigate away from the tutorial
+// and break the student's playback
+function openLinksInNewTab(node) {
+  if (!node) return;
+  node.querySelectorAll('a[href]').forEach((a) => {
+    a.setAttribute('target', '_blank');
+    a.setAttribute('rel', 'noopener noreferrer');
+  });
+}
+
 /**
  * Main Student App Component
  */
@@ -709,7 +720,7 @@ export default function StudentApp() {
     </div>
   );
 
-  //pane renderers
+  // Pane renderers
   function renderPane(pane, slideId) {
     if (!pane) return <div style={styles.emptyPane}>No content</div>;
 
@@ -717,6 +728,7 @@ export default function StudentApp() {
       case "text":
         return (
           <div
+            ref={openLinksInNewTab}
             style={styles.textContent}
             dangerouslySetInnerHTML={{ __html: pane.data?.content || "" }}
           />
@@ -741,6 +753,7 @@ export default function StudentApp() {
         <h3 style={styles.questionTitle}>{data.questionTitle}</h3>
         {data.description && (
           <div
+            ref={openLinksInNewTab}
             style={styles.questionDescription}
             dangerouslySetInnerHTML={{ __html: data.description }}
           />
@@ -786,6 +799,7 @@ export default function StudentApp() {
         <h3 style={styles.questionTitle}>{data.questionTitle}</h3>
         {data.description && (
           <div
+            ref={openLinksInNewTab}
             style={styles.questionDescription}
             dangerouslySetInnerHTML={{ __html: data.description }}
           />

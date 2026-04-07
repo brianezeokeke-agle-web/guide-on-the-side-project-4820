@@ -1,7 +1,9 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
-import { listTutorials, updateTutorial } from "../services/tutorialApi";
+import ShareModal from "../components/ShareModal";
+import { listTutorials, updateTutorial, deleteTutorial, duplicateTutorial } from "../services/tutorialApi";
+import { hasEmptySlides, validateBranchConfig } from "../services/slideValidation";
 
 //helper function to get relative time for last edited display
 function getRelativeTime(dateString) {
@@ -30,7 +32,10 @@ export default function TutorialListPage() {
   const [sortBy, setSortBy] = useState("newest");
   const [filterBy, setFilterBy] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [duplicatingId, setDuplicatingId] = useState(null);
+  const [shareModal, setShareModal] = useState({ isOpen: false, tutorialId: null, tutorialTitle: '' });
   const dropdownRef = useRef(null);
+  const highlightTimerRef = useRef(null);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -39,9 +44,7 @@ export default function TutorialListPage() {
       try {
         setLoading(true);
         const data = await listTutorials();
-        // filter out archived tutorials for the main list (show drafts and published, not archived)
-        const activeTutorials = data.filter((t) => !t.archived);
-        setTutorials(activeTutorials);
+        setTutorials(data);
       } catch (err) {
         console.error("Failed to load tutorials", err);
       } finally {
@@ -56,10 +59,15 @@ export default function TutorialListPage() {
     let result = [...tutorials];
 
     // Apply status filter
-    if (filterBy === "unpublished") {
-      result = result.filter((t) => t.status === "draft");
+    if (filterBy === "all") {
+      result = result.filter((t) => !t.archived);
+    } else if (filterBy === "published") {
+      result = result.filter((t) => t.status === "published" && !t.archived);
+    } else if (filterBy === "unpublished") {
+      result = result.filter((t) => t.status === "draft" && !t.archived);
+    } else if (filterBy === "archived") {
+      result = result.filter((t) => t.archived);
     }
-    // "all" shows all active (non-archived) tutorials
 
     // Apply search filter
     if (searchQuery.trim()) {
@@ -70,6 +78,14 @@ export default function TutorialListPage() {
       );
     }
 
+    // Safe date parser: returns a numeric timestamp for sorting.
+    // Ascending sorts use Infinity as fallback so missing dates land at the end.
+    const safeTime = (v, fallback = 0) => {
+      if (!v) return fallback;
+      const t = new Date(v).getTime();
+      return Number.isNaN(t) ? fallback : t;
+    };
+
     // Apply sorting
     result.sort((a, b) => {
       switch (sortBy) {
@@ -78,13 +94,13 @@ export default function TutorialListPage() {
         case "alphabetical-desc":
           return b.title.localeCompare(a.title);
         case "newest":
-          return new Date(b.createdAt) - new Date(a.createdAt);
+          return safeTime(b.createdAt) - safeTime(a.createdAt);
         case "oldest":
-          return new Date(a.createdAt) - new Date(b.createdAt);
+          return safeTime(a.createdAt, Infinity) - safeTime(b.createdAt, Infinity);
         case "modified-newest":
-          return new Date(b.updatedAt) - new Date(a.updatedAt);
+          return safeTime(b.updatedAt) - safeTime(a.updatedAt);
         case "modified-oldest":
-          return new Date(a.updatedAt) - new Date(b.updatedAt);
+          return safeTime(a.updatedAt, Infinity) - safeTime(b.updatedAt, Infinity);
         default:
           return 0;
       }
@@ -109,16 +125,13 @@ export default function TutorialListPage() {
     const highlight = searchParams.get("highlight");
     if (highlight) {
       setHighlightId(highlight);
-      // clear the query param from URL
       setSearchParams({});
-      // remove highlight after animation
-      setTimeout(() => {
-        setHighlightId(null);
-      }, 1500);
+      clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = setTimeout(() => setHighlightId(null), 1500);
     }
   }, [searchParams, setSearchParams]);
 
-  const toggleDropdown = (e, tutorialId) => {
+const toggleDropdown = (e, tutorialId) => {
     e.stopPropagation(); // prevent page navigation when clicking dropdown
     setOpenDropdownId(openDropdownId === tutorialId ? null : tutorialId);
   };
@@ -134,26 +147,140 @@ export default function TutorialListPage() {
     setOpenDropdownId(null);
     
     try {
-      await updateTutorial(tutorialId, { archived: true });
-      // remove from local state
-      setTutorials((prev) => prev.filter((t) => t.tutorialId !== tutorialId));
+      const updated = await updateTutorial(tutorialId, { archived: true });
+
+      // Update local state from server response to stay in sync
+      setTutorials((prev) =>
+        prev.map((t) =>
+          t.tutorialId === tutorialId ? { ...t, ...updated } : t
+        )
+      );
     } catch (err) {
       console.error("Failed to archive tutorial", err);
     }
   };
 
-  const handlePublish = (e) => {
+  const handleRestore = async (e, tutorialId) => {
     e.stopPropagation();
     setOpenDropdownId(null);
-    // placeholder - no functionality yet
-    alert("Publish functionality coming soon!");
+    
+    try {
+      const updated = await updateTutorial(tutorialId, { archived: false });
+      // Update local state from server response
+      setTutorials((prev) =>
+        prev.map((t) =>
+          t.tutorialId === tutorialId ? { ...t, ...updated } : t
+        )
+      );
+    } catch (err) {
+      console.error("Failed to restore tutorial", err);
+      alert("Failed to restore tutorial. Please try again.");
+    }
   };
 
-  const handlePreview = (e) => {
+  const handlePublish = async (e, tutorialId) => {
     e.stopPropagation();
     setOpenDropdownId(null);
-    // placeholder - no functionality yet
-    alert("Preview functionality coming soon!");
+
+    // Block publishing if any slide has empty content panes or invalid branch configs
+    const tut = tutorials.find((t) => t.tutorialId === tutorialId);
+    const regularSlides = (tut?.slides || []).filter((s) => !s.isBranchSlide);
+    if (regularSlides.length < 2) {
+      alert('Could not publish tutorial: a tutorial must have at least 2 slides (not counting conditional branch slides).');
+      return;
+    }
+    if (hasEmptySlides(tut)) {
+      alert('Could not publish tutorial as it contains empty slides. Please fill in all slide content before publishing.');
+      return;
+    }
+    const allSlides = tut?.slides || [];
+    const branchErrors = allSlides.flatMap((s) => validateBranchConfig(s, allSlides));
+    if (branchErrors.length > 0) {
+      alert('Could not publish tutorial: one or more branch slide configurations are invalid.\n\n' + branchErrors.join('\n'));
+      return;
+    }
+
+    // Publishing is permanent — warn the author
+    const confirmed = window.confirm(
+      'Publishing is permanent and cannot be undone. Once published, this tutorial will be live and accessible to students.\n\nDo you want to continue?'
+    );
+    if (!confirmed) return;
+    
+    try {
+      const updated = await updateTutorial(tutorialId, { status: "published" });
+      // Update local state from server response
+      setTutorials((prev) =>
+        prev.map((t) =>
+          t.tutorialId === tutorialId ? { ...t, ...updated } : t
+        )
+      );
+      alert("Tutorial published successfully!");
+    } catch (err) {
+      console.error("Failed to publish tutorial", err);
+      alert("Failed to publish tutorial. Please try again.");
+    }
+  };
+
+  const handlePreview = (e, tutorialId) => {
+    e.stopPropagation();
+    setOpenDropdownId(null);
+    // Open the public playback URL in a new tab
+    const config = window.gotsConfig || {};
+    const siteUrl = config.siteUrl || window.location.origin;
+    window.open(`${siteUrl}/gots/play/${tutorialId}?preview=1`, '_blank');
+  };
+
+  const handleShare = (e, tutorial) => {
+    e.stopPropagation();
+    setOpenDropdownId(null);
+    setShareModal({
+      isOpen: true,
+      tutorialId: tutorial.tutorialId,
+      tutorialTitle: tutorial.title,
+    });
+  };
+
+  const handleDelete = async (e, tutorial) => {
+    e.stopPropagation();
+    setOpenDropdownId(null);
+
+    const isPublished = tutorial.status === 'published';
+    const message = isPublished
+      ? `Permanently delete "${tutorial.title}"?\n\nThis tutorial is currently LIVE and accessible to students. Deleting it will immediately remove it and all its content. This cannot be undone.`
+      : `Permanently delete "${tutorial.title}"?\n\nAll slides and content will be permanently lost. This cannot be undone.`;
+
+    if (!window.confirm(message)) return;
+
+    try {
+      await deleteTutorial(tutorial.tutorialId);
+      setTutorials((prev) => prev.filter((t) => t.tutorialId !== tutorial.tutorialId));
+    } catch (err) {
+      console.error("Failed to delete tutorial", err);
+      alert("Failed to delete tutorial. Please try again.");
+    }
+  };
+
+  const handleDuplicate = async (e, tutorialId) => {
+    e.stopPropagation();
+    setOpenDropdownId(null);
+    if (duplicatingId) return;
+
+    setDuplicatingId(tutorialId);
+    try {
+      const newTutorial = await duplicateTutorial(tutorialId);
+      // Switch to unpublished view so the new draft copy is always visible,
+      // then highlight it so the author is immediately drawn to it.
+      setFilterBy("unpublished");
+      setTutorials((prev) => [newTutorial, ...prev]);
+      setHighlightId(newTutorial.tutorialId);
+      clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = setTimeout(() => setHighlightId(null), 1500);
+    } catch (err) {
+      console.error("Failed to duplicate tutorial", err);
+      alert("Failed to create a copy. Please try again.");
+    } finally {
+      setDuplicatingId(null);
+    }
   };
 
   if (loading) {
@@ -173,7 +300,12 @@ export default function TutorialListPage() {
 
       <main style={styles.main}>
         <div style={styles.header}>
-          <h1 style={styles.heading}>Your Tutorials</h1>
+          <h1 style={styles.heading}>
+            {filterBy === "published" ? "Published Tutorials" :
+             filterBy === "unpublished" ? "Unpublished Tutorials" :
+             filterBy === "archived" ? "Archived Tutorials" :
+             "Your Tutorials"}
+          </h1>
           <button
             style={styles.newButton}
             onClick={() => navigate("/tutorials/new")}
@@ -219,17 +351,7 @@ export default function TutorialListPage() {
               <label style={styles.controlLabel}>Filter:</label>
               <select
                 value={filterBy}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  if (value === "published") {
-                    navigate("/tutorials/published");
-                  } else if (value === "archived") {
-                    navigate("/tutorials/archived");
-                  } else {
-                    // "all" or "unpublished" stays on current page
-                    setFilterBy(value);
-                  }
-                }}
+                onChange={(e) => setFilterBy(e.target.value)}
                 style={styles.selectInput}
               >
                 <option value="all">All Tutorials</option>
@@ -245,9 +367,13 @@ export default function TutorialListPage() {
           <p style={styles.emptyText}>
             {searchQuery 
               ? "No tutorials match your search." 
-              : filterBy === "unpublished"
-                ? "No unpublished (draft) tutorials found."
-                : "No tutorials yet. Click \"New Tutorial\" to get started."}
+              : filterBy === "published"
+                ? "No published tutorials found."
+                : filterBy === "unpublished"
+                  ? "No unpublished (draft) tutorials found."
+                  : filterBy === "archived"
+                    ? "No archived tutorials found."
+                    : "No tutorials yet. Click \"New Tutorial\" to get started."}
           </p>
         ) : (
           <ul style={styles.list}>
@@ -265,40 +391,92 @@ export default function TutorialListPage() {
                   <span style={styles.lastModified}>Last modified {getRelativeTime(tut.updatedAt)}</span>
                 </div>
                 <div style={styles.listItemRight}>
-                  <span style={styles.statusBadge}>{tut.status}</span>
+                  <span style={{
+                    ...styles.statusBadge,
+                    ...(tut.archived
+                      ? { backgroundColor: '#f3f4f6', color: '#6b7280' }
+                      : tut.status === 'published'
+                        ? { backgroundColor: '#dcfce7', color: '#166534' }
+                        : { backgroundColor: '#fef3c7', color: '#92400e' }),
+                  }}>{tut.archived ? 'archived' : tut.status}</span>
                   <div style={styles.dropdownContainer} ref={openDropdownId === tut.tutorialId ? dropdownRef : null}>
-                    <button
-                      style={styles.dropdownButton}
-                      onClick={(e) => toggleDropdown(e, tut.tutorialId)}
-                      title="Actions"
-                    >
-                      ▼
-                    </button>
+                    <div style={styles.splitButton}>
+                      <button
+                        style={styles.splitButtonLabel}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/tutorials/${tut.tutorialId}/analytics`);
+                        }}
+                      >
+                        View Analytics
+                      </button>
+                      <button
+                        style={styles.splitButtonArrow}
+                        onClick={(e) => toggleDropdown(e, tut.tutorialId)}
+                        title="Actions"
+                      >
+                        ▾
+                      </button>
+                    </div>
                     {openDropdownId === tut.tutorialId && (
                       <div style={styles.dropdownMenu}>
                         <button
                           style={styles.dropdownItem}
                           onClick={(e) => handleEdit(e, tut.tutorialId)}
                         >
-                          Edit
+                          {tut.status === 'published' ? 'View' : 'Edit'}
                         </button>
+                        {tut.archived ? (
+                          <button
+                            style={styles.dropdownItem}
+                            onClick={(e) => handleRestore(e, tut.tutorialId)}
+                          >
+                            Restore
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              style={styles.dropdownItem}
+                              onClick={(e) => handleArchive(e, tut.tutorialId)}
+                            >
+                              Archive
+                            </button>
+                            {tut.status === 'draft' && (
+                              <button
+                                style={styles.dropdownItem}
+                                onClick={(e) => handlePublish(e, tut.tutorialId)}
+                              >
+                                Publish
+                              </button>
+                            )}
+                          </>
+                        )}
                         <button
                           style={styles.dropdownItem}
-                          onClick={(e) => handleArchive(e, tut.tutorialId)}
+                          disabled={duplicatingId === tut.tutorialId}
+                          onClick={(e) => handleDuplicate(e, tut.tutorialId)}
                         >
-                          Archive
+                          {duplicatingId === tut.tutorialId ? 'Copying...' : 'Create a Copy'}
                         </button>
                         <button
                           style={styles.dropdownItem}
-                          onClick={handlePublish}
-                        >
-                          Publish
-                        </button>
-                        <button
-                          style={styles.dropdownItem}
-                          onClick={handlePreview}
+                          onClick={(e) => handlePreview(e, tut.tutorialId)}
                         >
                           Preview
+                        </button>
+                        {tut.status === 'published' && !tut.archived && (
+                          <button
+                            style={styles.dropdownItem}
+                            onClick={(e) => handleShare(e, tut)}
+                          >
+                            Share
+                          </button>
+                        )}
+                        <button
+                          style={{ ...styles.dropdownItem, color: '#dc2626' }}
+                          onClick={(e) => handleDelete(e, tut)}
+                        >
+                          {tut.archived ? 'Delete Permanently' : 'Delete'}
                         </button>
                       </div>
                     )}
@@ -309,6 +487,13 @@ export default function TutorialListPage() {
           </ul>
         )}
       </main>
+      
+      <ShareModal
+        isOpen={shareModal.isOpen}
+        onClose={() => setShareModal({ isOpen: false, tutorialId: null, tutorialTitle: '' })}
+        tutorialId={shareModal.tutorialId}
+        tutorialTitle={shareModal.tutorialTitle}
+      />
     </div>
   );
 }
@@ -441,22 +626,41 @@ const styles = {
     fontSize: "12px",
     fontWeight: "500",
     borderRadius: "9999px",
-    backgroundColor: "#fef3c7",
-    color: "#92400e",
     textTransform: "capitalize",
   },
   dropdownContainer: {
     position: "relative",
   },
-  dropdownButton: {
-    padding: "6px 10px",
-    fontSize: "10px",
+  splitButton: {
+    display: "flex",
+    alignItems: "stretch",
+    border: "1px solid #7B2D26",
+    borderRadius: "6px",
+    overflow: "hidden",
+  },
+  splitButtonLabel: {
+    padding: "6px 14px",
+    fontSize: "13px",
+    fontWeight: "500",
     cursor: "pointer",
-    backgroundColor: "#f3f4f6",
-    border: "1px solid #d1d5db",
-    borderRadius: "4px",
-    color: "#374151",
+    backgroundColor: "#fff",
+    color: "#7B2D26",
+    border: "none",
+    borderRight: "1px solid #7B2D26",
     transition: "background-color 0.15s ease",
+    whiteSpace: "nowrap",
+  },
+  splitButtonArrow: {
+    padding: "6px 10px",
+    fontSize: "12px",
+    cursor: "pointer",
+    backgroundColor: "#fff",
+    color: "#7B2D26",
+    border: "none",
+    transition: "background-color 0.15s ease",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
   dropdownMenu: {
     position: "absolute",

@@ -60,6 +60,11 @@
 
 #gots-root button:focus,
 #root button:focus {
+  outline: none;
+}
+
+#gots-root button:focus-visible,
+#root button:focus-visible {
   outline: 2px solid #7B2D26;
   outline-offset: 2px;
 }
@@ -110,4 +115,10 @@
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* Spinner animation to be used by analytics and loading states */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }

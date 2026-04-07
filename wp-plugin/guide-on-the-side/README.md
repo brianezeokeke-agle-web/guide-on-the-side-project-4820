@@ -13,6 +13,7 @@ A WordPress plugin that provides an interactive tutorial creation and management
 - Tutorial states: Draft, Published, Archived
 - Drag-and-drop slide reordering
 - Auto-save on field blur
+- **PDF Certificate Generation** — students can download a certificate on tutorial completion (see below)
 
 ## Requirements
 
@@ -20,6 +21,7 @@ A WordPress plugin that provides an interactive tutorial creation and management
 - PHP 7.4+
 - Node.js 16+ (for building)
 - npm 8+ (for building)
+- Composer (for PDF certificate feature — installs dompdf)
 
 ## Installation
 
@@ -48,6 +50,17 @@ Or create a symbolic link for development:
 ```bash
 ln -s /path/to/wp-plugin/guide-on-the-side /path/to/wordpress/wp-content/plugins/guide-on-the-side
 ```
+
+### 2b. Install PHP Dependencies (PDF certificates)
+
+The PDF certificate feature requires dompdf. Run Composer in the plugin directory:
+
+```bash
+cd wp-plugin/guide-on-the-side
+composer install --no-dev --optimize-autoloader
+```
+
+If Composer is not installed, download it from https://getcomposer.org. The plugin boots safely without the `vendor/` directory — certificate issuance will return an error until dompdf is installed.
 
 ### 3. Activate the Plugin
 
@@ -188,6 +201,79 @@ Slides are merged by `slideId` - existing fields are preserved unless explicitly
 | choices  | array   | Answer choices (mcq only)                            |
 | answer   | string  | Correct answer index (mcq) or expected answer (text) |
 | mediaUrl | string  | Media URL (mediaUpload only)                         |
+
+## Certificate PDF Feature
+
+### Overview
+
+Students who complete a published tutorial can generate and download a PDF certificate of completion. Librarians (users with `edit_posts`) manage reusable templates and assign one to each tutorial.
+
+### Setup (librarian)
+
+1. Go to **Guide on the Side → Certificates** in the admin sidebar.
+2. Create at least one template (preset: `classic`, `minimal`, or `formal`).
+3. Open a tutorial in the editor and scroll to **Certificate Settings** at the bottom.
+4. Check **Enable completion certificate** and optionally select a template and issuer name override.
+5. Click **Save Certificate Settings**.
+
+### Student flow
+
+1. Student completes the tutorial (reaches the completion screen).
+2. A certificate section appears with a name input (prefilled for logged-in users).
+3. Student clicks **Generate Certificate** — the server validates eligibility and renders the PDF.
+4. A **Download Certificate** button appears; clicking it downloads the PDF.
+
+### Certificate REST API
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/gots/v1/tutorials/{id}/certificate/issue` | Public | Issue (or retrieve existing) certificate |
+| GET  | `/gots/v1/certificates/{token}/download`   | Public (signed token) | Stream PDF |
+| GET  | `/gots/v1/certificate-templates`           | `edit_posts` | List templates |
+| POST | `/gots/v1/certificate-templates`           | `edit_posts` | Create template |
+| PUT  | `/gots/v1/certificate-templates/{id}`      | `edit_posts` | Update template |
+| DELETE | `/gots/v1/certificate-templates/{id}`    | `edit_posts` | Soft-delete template |
+| POST | `/gots/v1/certificate-templates/{id}/preview` | `edit_posts` | Preview PDF (inline) |
+| GET  | `/gots/v1/tutorials/{id}/certificate-settings` | `edit_posts` | Get cert settings |
+| PUT  | `/gots/v1/tutorials/{id}/certificate-settings` | `edit_posts` | Save cert settings |
+| GET  | `/gots/v1/tutorials/{id}/certificates`     | `edit_posts` | List issued certificates |
+
+### Certificate Acceptance Tests (manual)
+
+- [ ] Completing a published tutorial shows the certificate section
+- [ ] Logged-in users see their WP display name prefilled; they can edit it
+- [ ] Anonymous users can enter any name
+- [ ] Clicking Generate issues the certificate and shows the Download button
+- [ ] Download button triggers a PDF file download
+- [ ] PDF contains correct recipient name, tutorial title, date, and issuer name
+- [ ] Completing the same tutorial again returns the previously issued certificate (idempotent)
+- [ ] Requests exceeding 5/hour from the same IP are rate-limited (429)
+- [ ] Expired or tampered download tokens return 403
+- [ ] Certificates are disabled when setting is not enabled
+- [ ] Admin can create/edit/delete templates in the Certificates admin page
+- [ ] Preview button opens a sample PDF in a new browser tab
+- [ ] Tutorial cert settings (enable, template, issuer) persist after page refresh
+- [ ] Admin can view issued certificates via `/tutorials/{id}/certificates` endpoint
+
+### Troubleshooting
+
+**"dompdf is not installed" error**
+Run `composer install --no-dev` in the plugin directory. Check that `vendor/autoload.php` exists.
+
+**PDF renders blank or missing styles**
+dompdf has limited CSS support. Avoid `flexbox`, `grid`, or advanced CSS. Stick to block-level elements and inline/table-based layouts.
+
+**Large background image causes PHP memory exhaustion**
+Increase `memory_limit` in `php.ini` or use a smaller image (< 1 MB recommended). Background images are embedded as base64 data URIs; large images multiply memory usage ~1.37×.
+
+**PDF file write fails**
+Ensure WordPress can write to `wp-content/uploads/`. Check directory permissions (typically `755`) and disk space.
+
+**Download link expires too soon**
+The default TTL is 24 hours. This is set by `GOTS_CERT_DOWNLOAD_TTL` in `includes/certificates.php`.
+
+**Completion proof expired**
+The proof is valid for 15 minutes (`GOTS_CERT_PROOF_TTL`). If a student takes longer than 15 minutes on the last slide, reload the tutorial page and complete again.
 
 ## Acceptance Tests
 

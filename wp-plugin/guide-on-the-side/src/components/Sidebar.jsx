@@ -1,15 +1,61 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 export default function Sidebar() {
+  const location = useLocation();
+
+  const isActive = (path) => {
+    if (path === "/") return location.pathname === "/";
+    return location.pathname.startsWith(path);
+  };
+
   return (
     <aside style={styles.sidebar}>
-      <Link to="/" style={styles.navLink}>Home</Link>
-      <Link to="/tutorials" style={styles.navLink}>All Tutorials</Link>
-      <Link to="/tutorials/published" style={styles.navLink}>Published</Link>
-      <Link to="/tutorials/archived" style={styles.navLink}>Archived</Link>
-      <div style={styles.navItem}>Settings</div>
+      <Link
+        to="/"
+        style={{
+          ...styles.navLink,
+          ...(isActive("/") ? styles.navLinkActive : {}),
+        }}
+      >
+        Home
+      </Link>
+      <Link
+        to="/tutorials"
+        style={{
+          ...styles.navLink,
+          ...(isActive("/tutorials") ? styles.navLinkActive : {}),
+        }}
+      >
+        My Tutorials
+      </Link>
+      <Link
+        to="/certificate-templates"
+        style={{
+          ...styles.navLink,
+          ...(isActive("/certificate-templates") ? styles.navLinkActive : {}),
+        }}
+      >
+        Certificates
+      </Link>
+      <Link
+        to="/tutorial-themes"
+        style={{
+          ...styles.navLink,
+          ...(isActive("/tutorial-themes") ? styles.navLinkActive : {}),
+        }}
+      >
+        Tutorial Themes
+      </Link>
+      <Link
+        to="/certificate-verify"
+        style={{
+          ...styles.navLink,
+          ...(isActive("/certificate-verify") ? styles.navLinkActive : {}),
+        }}
+      >
+        Verify certificate ID
+      </Link>
 
-      {/* empty scaffolding space for future navigation items */}
       <div style={{ flexGrow: 1 }} />
     </aside>
   );
@@ -26,15 +72,6 @@ const styles = {
     gap: "4px",
     fontFamily: "system-ui, -apple-system, sans-serif",
   },
-  navItem: {
-    cursor: "pointer",
-    padding: "8px 12px",
-    borderRadius: "6px",
-    fontSize: "14px",
-    fontWeight: "500",
-    color: "#374151",
-    transition: "background-color 0.15s ease",
-  },
   navLink: {
     cursor: "pointer",
     padding: "8px 12px",
@@ -44,5 +81,10 @@ const styles = {
     color: "#374151",
     textDecoration: "none",
     transition: "background-color 0.15s ease",
+  },
+  navLinkActive: {
+    backgroundColor: "#f5e6e4",
+    color: "#7B2D26",
+    fontWeight: "600",
   },
 };

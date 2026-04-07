@@ -17,7 +17,7 @@ export default function LandingDashboard() {
             style={styles.primaryButton}
             onClick={() => navigate("/tutorials")}
           >
-            View All Tutorials
+            My Tutorials
           </button>
 
           <button

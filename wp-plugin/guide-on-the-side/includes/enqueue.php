@@ -100,6 +100,10 @@ function gots_enqueue_admin_scripts($hook) {
         'nonce'    => wp_create_nonce('wp_rest'),
         'adminUrl' => admin_url(),
         'pluginUrl' => GOTS_PLUGIN_URL,
+        'siteUrl'  => home_url(),
+        // Server date in site timezone (Y-m-d); analytics date filters use this
+        // so ranges match stored rows regardless of browser timezone.
+        'serverToday' => current_time('Y-m-d'),
     );
     
     // if script is enqueued, localize it

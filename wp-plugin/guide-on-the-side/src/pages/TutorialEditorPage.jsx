@@ -1,9 +1,65 @@
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import DOMPurify from "dompurify";
 import { getTutorial, updateTutorial } from "../services/tutorialApi";
+import PdfPaneEmbed from "../components/PdfPaneEmbed";
 import { selectMedia, isMediaLibraryAvailable } from "../services/mediaLibrary";
+import {
+  getTutorialCertSettings,
+  saveTutorialCertSettings,
+  listTemplates,
+} from "../services/certificateTemplateApi";
+import {
+  getTutorialThemeSettings,
+  saveTutorialThemeSettings,
+  listTutorialThemes,
+} from "../services/tutorialThemeApi";
+import {
+  getTutorialLayoutSettings,
+  saveTutorialLayoutSettings,
+} from "../services/tutorialLayoutApi";
+import { THEME_FIELD_DEFS, THEME_TOKEN_DEFAULTS } from "../services/themeSchema";
+import {
+  LAYOUT_DEFAULT_LEFT_RATIO,
+  LAYOUT_MIN_LEFT_RATIO,
+  LAYOUT_MAX_LEFT_RATIO,
+  resolveEffectivePaneRatio,
+} from "../services/themeHelpers";
+import {
+  buildBranchChildrenMap,
+  buildRegularSlideOrder,
+  buildSlidesById,
+  getDisplaySlideNumber,
+  getEligibleParentSlides,
+  validateBranchConfig,
+} from "../services/branchHelpers";
 
-// WordPress TinyMCE Editor Component
+// Read-only HTML preview (no hooks, no TinyMCE)
+function WysiwygReadOnly({ value }) {
+  const sanitizedValue = DOMPurify.sanitize(value || '<em>No content</em>');
+  return (
+    <div style={styles.wysiwygContainer}>
+      <div
+        style={{
+          width: '100%',
+          minHeight: '120px',
+          padding: '12px',
+          fontSize: '14px',
+          lineHeight: '1.6',
+          color: '#6b7280',
+          backgroundColor: '#f3f4f6',
+          border: '1px solid #d1d5db',
+          borderRadius: '4px',
+          boxSizing: 'border-box',
+          overflow: 'auto',
+        }}
+        dangerouslySetInnerHTML={{ __html: sanitizedValue }}
+      />
+    </div>
+  );
+}
+
+// wp tinymce editor component
 function WysiwygEditor({ value, onChange, onBlur, editorId }) {
   const containerRef = useRef(null);
   const editorIdRef = useRef(editorId || `gots-editor-${Math.random().toString(36).substr(2, 9)}`);
@@ -11,7 +67,7 @@ function WysiwygEditor({ value, onChange, onBlur, editorId }) {
   const lastValueRef = useRef(value);
   const isInternalChangeRef = useRef(false);
 
-  // Initialize TinyMCE on mount
+  // Initialize tinymce on mount
   useEffect(() => {
     const id = editorIdRef.current;
     
@@ -33,20 +89,31 @@ function WysiwygEditor({ value, onChange, onBlur, editorId }) {
         tinymce: {
           wpautop: true,
           plugins: 'charmap colorpicker hr lists paste tabfocus textcolor fullscreen wordpress wpautoresize wpeditimage wpemoji wpgallery wplink wptextpattern',
-          toolbar1: 'formatselect bold italic bullist numlist blockquote alignleft aligncenter alignright link unlink',
+          toolbar1: 'undo redo | formatselect bold italic bullist numlist blockquote alignleft aligncenter alignright link unlink',
           toolbar2: '',
           height: 250,
           menubar: false,
           statusbar: false,
           resize: false,
+          readonly: 0,
           setup: (editor) => {
-            editor.on('change keyup paste', () => {
+            // Handler to sync content changes
+            const syncContent = () => {
               if (!isInternalChangeRef.current) {
                 const content = editor.getContent();
                 lastValueRef.current = content;
                 onChange(content);
               }
+            };
+            
+            // for change and keyup, sync immediately
+            editor.on('change keyup', syncContent);
+            
+            // for paste, use a small delay to let TinyMCE process the pasted content first
+            editor.on('paste', () => {
+              setTimeout(syncContent, 50);
             });
+            
             editor.on('blur', () => {
               onBlur && onBlur();
             });
@@ -117,10 +184,11 @@ function WysiwygEditor({ value, onChange, onBlur, editorId }) {
 }
 
 //editor component for multiple choice question
-function MCQEditor({ data, onChange, onBlur, editorId }) {
+function MCQEditor({ data, onChange, onBlur, editorId, readOnly = false }) {
   const [errors, setErrors] = useState({});
-
-  const questionData = data || {
+  
+  // Default data structure
+  const defaultData = {
     questionType: "multipleChoice",
     questionTitle: "",
     description: "",
@@ -135,6 +203,38 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
       incorrect: "Review and try again.",
     },
   };
+
+  // Use internal state initialized from props, with defaults for missing fields
+  const [questionData, setQuestionData] = useState(() => ({
+    ...defaultData,
+    ...data,
+    options: data?.options?.length ? data.options : defaultData.options,
+    feedback: { ...defaultData.feedback, ...data?.feedback },
+  }));
+
+  // Keep a ref to avoid stale closures
+  const questionDataRef = useRef(questionData);
+  questionDataRef.current = questionData;
+  
+  // Track the last data we synced from to avoid unnecessary updates
+  const lastSyncedDataRef = useRef(null);
+
+  // Sync internal state when data prop changes from parent (e.g., on initial load)
+  // Only sync if the data actually changed (compare by JSON string)
+  useEffect(() => {
+    if (data) {
+      const dataStr = JSON.stringify(data);
+      if (dataStr !== lastSyncedDataRef.current) {
+        lastSyncedDataRef.current = dataStr;
+        setQuestionData({
+          ...defaultData,
+          ...data,
+          options: data.options?.length ? data.options : defaultData.options,
+          feedback: { ...defaultData.feedback, ...data.feedback },
+        });
+      }
+    }
+  }, [data]);
 
   const validate = (newData) => {
     const newErrors = {};
@@ -152,64 +252,87 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
   };
 
   const updateField = (field, value) => {
-    const newData = { ...questionData, [field]: value };
+    const newData = { ...questionDataRef.current, [field]: value };
+    setQuestionData(newData);
     validate(newData);
     onChange(newData);
   };
 
   const updateOption = (optionId, text) => {
-    const newOptions = questionData.options.map((opt) =>
+    const newOptions = questionDataRef.current.options.map((opt) =>
       opt.id === optionId ? { ...opt, text } : opt
     );
-    const newData = { ...questionData, options: newOptions };
+    const newData = { ...questionDataRef.current, options: newOptions };
+    setQuestionData(newData);
     validate(newData);
     onChange(newData);
   };
 
   const addOption = () => {
-    const nextId = String.fromCharCode(97 + questionData.options.length); // a, b, c, d...
-    const newOptions = [...questionData.options, { id: nextId, text: "" }];
-    const newData = { ...questionData, options: newOptions };
+    const nextId = String.fromCharCode(97 + questionDataRef.current.options.length); // a, b, c, d...
+    const newOptions = [...questionDataRef.current.options, { id: nextId, text: "" }];
+    const newData = { ...questionDataRef.current, options: newOptions };
+    setQuestionData(newData);
     onChange(newData);
   };
 
   const removeOption = (optionId) => {
-    if (questionData.options.length <= 2) {
+    if (questionDataRef.current.options.length <= 2) {
       setErrors({ ...errors, options: "At least 2 options are required" });
       return;
     }
-    const newOptions = questionData.options.filter((opt) => opt.id !== optionId);
-    const newCorrectId = questionData.correctOptionId === optionId ? "" : questionData.correctOptionId;
-    const newData = { ...questionData, options: newOptions, correctOptionId: newCorrectId };
+    const newOptions = questionDataRef.current.options.filter((opt) => opt.id !== optionId);
+    const newCorrectId = questionDataRef.current.correctOptionId === optionId ? "" : questionDataRef.current.correctOptionId;
+    const newData = { ...questionDataRef.current, options: newOptions, correctOptionId: newCorrectId };
+    setQuestionData(newData);
     validate(newData);
     onChange(newData);
   };
 
   const setCorrectOption = (optionId) => {
-    const newData = { ...questionData, correctOptionId: optionId };
+    const newData = { ...questionDataRef.current, correctOptionId: optionId };
+    setQuestionData(newData);
     validate(newData);
     onChange(newData);
+    // Correct answer was just set — trigger save
+    onBlur && onBlur();
   };
 
   const updateFeedback = (type, value) => {
     const newData = {
-      ...questionData,
-      feedback: { ...questionData.feedback, [type]: value },
+      ...questionDataRef.current,
+      feedback: { ...questionDataRef.current.feedback, [type]: value },
     };
+    setQuestionData(newData);
     onChange(newData);
+  };
+
+  const isValid = !!questionData.correctOptionId;
+
+  // Only allow save (onBlur) when a correct option is selected
+  const guardedBlur = () => {
+    if (isValid) {
+      onBlur && onBlur();
+    }
   };
 
   return (
     <div style={styles.mcqContainer}>
+      {!isValid && (
+        <div style={styles.validationBanner}>
+          You must select a correct answer before this question can be saved. Use the radio buttons below to mark the correct option.
+        </div>
+      )}
       {/* question title textbox */}
       <div style={styles.mcqField}>
         <label style={styles.mcqLabel}>Question Title *</label>
         <input
           type="text"
-          style={styles.mcqInput}
+          style={{ ...styles.mcqInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
           value={questionData.questionTitle || ""}
-          onChange={(e) => updateField("questionTitle", e.target.value)}
-          onBlur={onBlur}
+          onChange={readOnly ? undefined : (e) => updateField("questionTitle", e.target.value)}
+          onBlur={readOnly ? undefined : guardedBlur}
+          readOnly={readOnly}
           placeholder="Enter your question..."
         />
         {errors.questionTitle && (
@@ -220,12 +343,16 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
       {/* description with rich text editor */}
       <div style={styles.mcqField}>
         <label style={styles.mcqLabel}>Description (optional)</label>
-        <WysiwygEditor
-          editorId={`${editorId}-description`}
-          value={questionData.description || ""}
-          onChange={(content) => updateField("description", content)}
-          onBlur={onBlur}
-        />
+        {readOnly ? (
+          <WysiwygReadOnly value={questionData.description || ""} />
+        ) : (
+          <WysiwygEditor
+            editorId={`${editorId}-description`}
+            value={questionData.description || ""}
+            onChange={(content) => updateField("description", content)}
+            onBlur={guardedBlur}
+          />
+        )}
       </div>
 
       {/* options for validation */}
@@ -244,20 +371,22 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
                 type="radio"
                 name="correctOption"
                 checked={questionData.correctOptionId === option.id}
-                onChange={() => setCorrectOption(option.id)}
+                onChange={readOnly ? undefined : () => setCorrectOption(option.id)}
+                disabled={readOnly}
                 style={styles.radioInput}
                 title="Mark as correct answer"
               />
               <span style={styles.optionLabel}>{option.id.toUpperCase()}.</span>
               <input
                 type="text"
-                style={styles.optionInput}
+                style={{ ...styles.optionInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
                 value={option.text}
-                onChange={(e) => updateOption(option.id, e.target.value)}
-                onBlur={onBlur}
+                onChange={readOnly ? undefined : (e) => updateOption(option.id, e.target.value)}
+                onBlur={readOnly ? undefined : guardedBlur}
+                readOnly={readOnly}
                 placeholder={`Option ${option.id.toUpperCase()}`}
               />
-              {questionData.options.length > 2 && (
+              {!readOnly && questionData.options.length > 2 && (
                 <button
                   type="button"
                   style={styles.removeOptionButton}
@@ -270,13 +399,15 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
             </div>
           ))}
         </div>
-        <button
-          type="button"
-          style={styles.addOptionButton}
-          onClick={addOption}
-        >
-          + Add Option
-        </button>
+        {!readOnly && (
+          <button
+            type="button"
+            style={styles.addOptionButton}
+            onClick={addOption}
+          >
+            + Add Option
+          </button>
+        )}
       </div>
 
       {/* feedback */}
@@ -286,10 +417,11 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
           <span style={styles.feedbackLabel}>Correct:</span>
           <input
             type="text"
-            style={styles.feedbackInput}
+            style={{ ...styles.feedbackInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
             value={questionData.feedback?.correct || ""}
-            onChange={(e) => updateFeedback("correct", e.target.value)}
-            onBlur={onBlur}
+            onChange={readOnly ? undefined : (e) => updateFeedback("correct", e.target.value)}
+            onBlur={readOnly ? undefined : guardedBlur}
+            readOnly={readOnly}
             placeholder="Feedback for correct answer"
           />
         </div>
@@ -297,10 +429,11 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
           <span style={styles.feedbackLabel}>Incorrect:</span>
           <input
             type="text"
-            style={styles.feedbackInput}
+            style={{ ...styles.feedbackInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
             value={questionData.feedback?.incorrect || ""}
-            onChange={(e) => updateFeedback("incorrect", e.target.value)}
-            onBlur={onBlur}
+            onChange={readOnly ? undefined : (e) => updateFeedback("incorrect", e.target.value)}
+            onBlur={readOnly ? undefined : guardedBlur}
+            readOnly={readOnly}
             placeholder="Feedback for incorrect answer"
           />
         </div>
@@ -310,14 +443,15 @@ function MCQEditor({ data, onChange, onBlur, editorId }) {
 }
 
 // editor component for text input question (free text answer)
-function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
+function TextQuestionEditor({ data, onChange, onBlur, editorId, readOnly = false }) {
   const [errors, setErrors] = useState({});
 
-  const questionData = data || {
+  // Default data structure
+  const defaultData = {
     questionType: "textInput",
     questionTitle: "",
     description: "",
-    correctAnswer: "",
+    correctAnswers: [""],
     caseSensitive: false, // always compare as lowercase
     required: true,
     feedback: {
@@ -326,43 +460,114 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
     },
   };
 
+  // Migrate legacy single correctAnswer to correctAnswers array.
+  // Cap at 5 entries and coerce non-strings to "" so malformed/legacy data
+  // can't render an unbounded list or break downstream .trim() calls.
+  const migrateAnswers = (d) => {
+    let raw;
+    if (d?.correctAnswers && Array.isArray(d.correctAnswers)) {
+      raw = d.correctAnswers;
+    } else if (d?.correctAnswer) {
+      raw = [d.correctAnswer];
+    } else {
+      return [""];
+    }
+    const sanitized = raw.slice(0, 5).map((a) => (typeof a === "string" ? a : ""));
+    return sanitized.length > 0 ? sanitized : [""];
+  };
+
+  // Use internal state initialized from props, with defaults for missing fields
+  const [questionData, setQuestionData] = useState(() => ({
+    ...defaultData,
+    ...data,
+    correctAnswers: migrateAnswers(data),
+    feedback: { ...defaultData.feedback, ...data?.feedback },
+  }));
+
+  // Keep a ref to avoid stale closures
+  const questionDataRef = useRef(questionData);
+  questionDataRef.current = questionData;
+  
+  // Track the last data we synced from to avoid unnecessary updates
+  const lastSyncedDataRef = useRef(null);
+
+  // Sync internal state when data prop changes from parent (e.g., on initial load)
+  // Only sync if the data actually changed (compare by JSON string)
+  useEffect(() => {
+    if (data) {
+      const dataStr = JSON.stringify(data);
+      if (dataStr !== lastSyncedDataRef.current) {
+        lastSyncedDataRef.current = dataStr;
+        setQuestionData({
+          ...defaultData,
+          ...data,
+          correctAnswers: migrateAnswers(data),
+          feedback: { ...defaultData.feedback, ...data.feedback },
+        });
+      }
+    }
+  }, [data]);
+
   const validate = (newData) => {
     const newErrors = {};
     if (!newData.questionTitle?.trim()) {
       newErrors.questionTitle = "Question title is required";
     }
-    if (!newData.correctAnswer?.trim()) {
-      newErrors.correctAnswer = "Correct answer is required";
+    const hasAtLeastOne = (newData.correctAnswers || []).some(
+      (a) => typeof a === "string" && a.trim()
+    );
+    if (!hasAtLeastOne) {
+      newErrors.correctAnswers = "At least one correct answer is required";
     }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const updateField = (field, value) => {
-    const newData = { ...questionData, [field]: value };
+    const newData = { ...questionDataRef.current, [field]: value };
+    setQuestionData(newData);
     validate(newData);
     onChange(newData);
   };
 
   const updateFeedback = (type, value) => {
     const newData = {
-      ...questionData,
-      feedback: { ...questionData.feedback, [type]: value },
+      ...questionDataRef.current,
+      feedback: { ...questionDataRef.current.feedback, [type]: value },
     };
+    setQuestionData(newData);
     onChange(newData);
+  };
+
+  const isValid = (questionData.correctAnswers || []).some(
+    (a) => typeof a === "string" && a.trim()
+  );
+
+  // Only allow save (onBlur) when a correct answer is provided
+  const guardedBlur = () => {
+    if (isValid) {
+      onBlur && onBlur();
+    }
   };
 
   return (
     <div style={styles.mcqContainer}>
+      {!isValid && (
+        <div style={styles.validationBanner}>
+          You must provide a correct answer before this question can be saved. Enter the expected answer below.
+        </div>
+      )}
+
       {/* question title */}
       <div style={styles.mcqField}>
         <label style={styles.mcqLabel}>Question Title *</label>
         <input
           type="text"
-          style={styles.mcqInput}
+          style={{ ...styles.mcqInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
           value={questionData.questionTitle || ""}
-          onChange={(e) => updateField("questionTitle", e.target.value)}
-          onBlur={onBlur}
+          onChange={readOnly ? undefined : (e) => updateField("questionTitle", e.target.value)}
+          onBlur={readOnly ? undefined : guardedBlur}
+          readOnly={readOnly}
           placeholder="Enter your question..."
         />
         {errors.questionTitle && (
@@ -373,30 +578,68 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
       {/* description with rich text editor */}
       <div style={styles.mcqField}>
         <label style={styles.mcqLabel}>Description (optional)</label>
-        <WysiwygEditor
-          editorId={`${editorId}-description`}
-          value={questionData.description || ""}
-          onChange={(content) => updateField("description", content)}
-          onBlur={onBlur}
-        />
+        {readOnly ? (
+          <WysiwygReadOnly value={questionData.description || ""} />
+        ) : (
+          <WysiwygEditor
+            editorId={`${editorId}-description`}
+            value={questionData.description || ""}
+            onChange={(content) => updateField("description", content)}
+            onBlur={guardedBlur}
+          />
+        )}
       </div>
 
-      {/* correct answer */}
+      {/* correct answers (up to 5) */}
       <div style={styles.mcqField}>
-        <label style={styles.mcqLabel}>Correct Answer *</label>
-        <input
-          type="text"
-          style={styles.mcqInput}
-          value={questionData.correctAnswer || ""}
-          onChange={(e) => updateField("correctAnswer", e.target.value)}
-          onBlur={onBlur}
-          placeholder="Enter the correct answer..."
-        />
-        {errors.correctAnswer && (
-          <span style={styles.errorText}>{errors.correctAnswer}</span>
+        <label style={styles.mcqLabel}>Correct Answer(s) *</label>
+        {(questionData.correctAnswers || [""]).map((answer, idx) => (
+          <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '6px' }}>
+            <input
+              type="text"
+              style={{ ...styles.mcqInput, flex: 1, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
+              value={answer}
+              onChange={readOnly ? undefined : (e) => {
+                const updated = [...(questionDataRef.current.correctAnswers || [""])];
+                updated[idx] = e.target.value;
+                updateField("correctAnswers", updated);
+              }}
+              onBlur={readOnly ? undefined : guardedBlur}
+              readOnly={readOnly}
+              placeholder={idx === 0 ? "Enter the correct answer..." : `Alternative answer ${idx + 1}...`}
+            />
+            {!readOnly && idx > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const updated = (questionDataRef.current.correctAnswers || [""]).filter((_, i) => i !== idx);
+                  updateField("correctAnswers", updated);
+                }}
+                style={{ background: 'none', border: 'none', color: '#991b1b', cursor: 'pointer', fontSize: '18px', padding: '4px 8px' }}
+                title="Remove this answer"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        ))}
+        {!readOnly && (questionData.correctAnswers || [""]).length < 5 && (
+          <button
+            type="button"
+            onClick={() => {
+              const updated = [...(questionDataRef.current.correctAnswers || [""]), ""];
+              updateField("correctAnswers", updated);
+            }}
+            style={{ background: 'none', border: '1px dashed #d1d5db', borderRadius: '6px', padding: '6px 12px', color: '#6b7280', cursor: 'pointer', fontSize: '13px', marginTop: '2px' }}
+          >
+            + Add alternative answer
+          </button>
+        )}
+        {errors.correctAnswers && (
+          <span style={styles.errorText}>{errors.correctAnswers}</span>
         )}
         <span style={styles.hintText}>
-          Note: Answers are compared case-insensitively (e.g., "Hello" matches "hello")
+          Answers are not case-sensitive. You can add up to 5 correct answers.
         </span>
       </div>
 
@@ -407,10 +650,11 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
           <span style={styles.feedbackLabel}>Correct:</span>
           <input
             type="text"
-            style={styles.feedbackInput}
+            style={{ ...styles.feedbackInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
             value={questionData.feedback?.correct || ""}
-            onChange={(e) => updateFeedback("correct", e.target.value)}
-            onBlur={onBlur}
+            onChange={readOnly ? undefined : (e) => updateFeedback("correct", e.target.value)}
+            onBlur={readOnly ? undefined : guardedBlur}
+            readOnly={readOnly}
             placeholder="Feedback for correct answer"
           />
         </div>
@@ -418,10 +662,11 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
           <span style={styles.feedbackLabel}>Incorrect:</span>
           <input
             type="text"
-            style={styles.feedbackInput}
+            style={{ ...styles.feedbackInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
             value={questionData.feedback?.incorrect || ""}
-            onChange={(e) => updateFeedback("incorrect", e.target.value)}
-            onBlur={onBlur}
+            onChange={readOnly ? undefined : (e) => updateFeedback("incorrect", e.target.value)}
+            onBlur={readOnly ? undefined : guardedBlur}
+            readOnly={readOnly}
             placeholder="Feedback for incorrect answer"
           />
         </div>
@@ -431,7 +676,7 @@ function TextQuestionEditor({ data, onChange, onBlur, editorId }) {
 }
 
 // editor component for media upload (images and videos) - uses WordPress Media Library
-function MediaUploadEditor({ data, onChange, onBlur }) {
+function MediaUploadEditor({ data, onChange, onBlur, readOnly = false }) {
   const [error, setError] = useState(null);
 
   // Use the data prop directly, with fallback for initial empty state
@@ -440,6 +685,9 @@ function MediaUploadEditor({ data, onChange, onBlur }) {
     url: "",
     attachmentId: null,
     altText: "",
+    filename: "",
+    originalName: "",
+    mimeType: "",
   };
 
   // Check if we have uploaded media
@@ -464,10 +712,13 @@ function MediaUploadEditor({ data, onChange, onBlur }) {
           url: selected.url,
           attachmentId: selected.attachmentId,
           altText: selected.altText || mediaData.altText || "",
+          filename: selected.filename || "",
+          originalName: selected.originalName || selected.filename || "",
+          mimeType: selected.mimeType || "",
         };
         
-        onChange(newData);
-        onBlur(); // Persist immediately after selection
+        // Pass true to persist immediately after selection
+        onChange(newData, true);
       }
     } catch (err) {
       setError(err.message || "Failed to select media");
@@ -484,9 +735,12 @@ function MediaUploadEditor({ data, onChange, onBlur }) {
       url: "",
       attachmentId: null,
       altText: "",
+      filename: "",
+      originalName: "",
+      mimeType: "",
     };
-    onChange(newData);
-    onBlur();
+    // Pass true to persist immediately after removal
+    onChange(newData, true);
   };
 
   const updateAltText = (altText) => {
@@ -502,13 +756,13 @@ function MediaUploadEditor({ data, onChange, onBlur }) {
 
       {!hasMedia ? (
         // Upload/Select area - only show when no media
-        <div style={styles.uploadArea} onClick={handleSelectMedia}>
+        <div style={{ ...styles.uploadArea, ...(readOnly ? { opacity: 0.5, cursor: 'default' } : {}) }} onClick={readOnly ? undefined : handleSelectMedia}>
           <div style={styles.uploadLabel}>
             <span style={styles.uploadIcon}>📁</span>
-            <span>Click to select from Media Library</span>
-            <span style={styles.uploadHint}>Images: JPEG, PNG, GIF, WebP</span>
-            <span style={styles.uploadHint}>Videos: MP4, WebM, MOV</span>
-            <span style={styles.uploadHint}>(Limit: 1 file per pane)</span>
+            <span>{readOnly ? 'No media selected' : 'Click to select from Media Library'}</span>
+            <span style={styles.uploadHint}>Images, video, audio</span>
+            <span style={styles.uploadHint}>PDF, Word, PowerPoint, and other types allowed by WordPress</span>
+            <span style={styles.uploadHint}>(Limit: 1 file per pane — upload in Media Library first if needed)</span>
           </div>
         </div>
       ) : (
@@ -532,12 +786,24 @@ function MediaUploadEditor({ data, onChange, onBlur }) {
               controls
               style={styles.mediaVideo}
             />
+          ) : mediaData.mediaType === "audio" ? (
+            <audio src={mediaData.url} controls style={styles.mediaAudio}>
+              Audio not supported in this browser.
+            </audio>
+          ) : mediaData.mediaType === "pdf" ? (
+            <PdfPaneEmbed
+              url={mediaData.url}
+              title={mediaData.altText || mediaData.originalName || "PDF document"}
+              compact
+            />
           ) : (
-            // Fallback for unknown media type with URL
-            <div style={styles.mediaFallback}>
-              <span>📎 Media file attached</span>
+            <div style={styles.mediaFileCard}>
+              <span style={styles.mediaFileTitle}>📎 {mediaData.originalName || mediaData.filename || "Attached file"}</span>
+              <p style={styles.mediaFileHint}>
+                Students will see a download / open link. Office documents usually open in the browser or app.
+              </p>
               <a href={mediaData.url} target="_blank" rel="noopener noreferrer" style={styles.mediaLink}>
-                View file
+                Open file
               </a>
             </div>
           )}
@@ -546,36 +812,532 @@ function MediaUploadEditor({ data, onChange, onBlur }) {
             <span style={styles.mediaFilename}>
               {mediaData.attachmentId ? `Attachment #${mediaData.attachmentId}` : 'Media file'}
             </span>
-            <button
-              type="button"
-              onClick={handleRemove}
-              style={styles.removeMediaButton}
-            >
-              Remove
-            </button>
+            {!readOnly && (
+              <button
+                type="button"
+                onClick={handleRemove}
+                style={styles.removeMediaButton}
+              >
+                Remove
+              </button>
+            )}
           </div>
 
-          {/* Alt text input */}
-          <div style={styles.altTextRow}>
-            <label style={styles.altTextLabel}>Alt Text (optional):</label>
-            <input
-              type="text"
-              style={styles.altTextInput}
-              value={mediaData.altText || ""}
-              onChange={(e) => updateAltText(e.target.value)}
-              onBlur={onBlur}
-              placeholder="Describe the media for accessibility..."
-            />
-          </div>
+          {/* Alt text — mainly for images; reused as PDF iframe title */}
+          {(mediaData.mediaType === "image" || mediaData.mediaType === "pdf") && (
+            <div style={styles.altTextRow}>
+              <label style={styles.altTextLabel}>
+                {mediaData.mediaType === "image" ? "Alt text (optional):" : "Short title (optional, for accessibility):"}
+              </label>
+              <input
+                type="text"
+                style={{ ...styles.altTextInput, ...(readOnly ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
+                value={mediaData.altText || ""}
+                onChange={readOnly ? undefined : (e) => updateAltText(e.target.value)}
+                onBlur={readOnly ? undefined : onBlur}
+                readOnly={readOnly}
+                placeholder={mediaData.mediaType === "image" ? "Describe the image for screen readers…" : "e.g. Syllabus PDF"}
+              />
+            </div>
+          )}
 
           {/* Replace media button */}
-          <button
-            type="button"
-            onClick={handleSelectMedia}
-            style={styles.replaceMediaButton}
-          >
-            Replace Media
-          </button>
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={handleSelectMedia}
+              style={styles.replaceMediaButton}
+            >
+              Replace Media
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// BranchConfigEditor
+// Collapsible "Configurations" section rendered inside the active slide editor
+function BranchConfigEditor({ slide, allSlides, isPublished, tutorialLayoutSettings, onSlidePatch, onBlur }) {
+  const [expanded, setExpanded] = useState(false);
+
+  //Theme override state
+  const patchTimerRef  = useRef(null);
+  const override       = slide.themeOverride || { enabled: false, tokens: {} };
+  const themeEnabled   = override.enabled === true;
+  // Layout: optional custom ratio, optional student resize — independent toggles
+  const layoutOverride = slide.layoutOverride || null;
+  const hasLayoutOverride = layoutOverride?.enabled === true;
+  const layoutAllowStudentResize = layoutOverride?.allowStudentResize === true;
+  const paneRatioCustomized = layoutOverride?.paneRatioCustomized !== false;
+  const customPaneRatioEnabled = hasLayoutOverride && paneRatioCustomized;
+  const layoutRatio =
+    customPaneRatioEnabled && typeof layoutOverride.leftPaneRatio === "number"
+      ? layoutOverride.leftPaneRatio
+      : LAYOUT_DEFAULT_LEFT_RATIO;
+
+  const buildSlideLayoutOverride = ({ leftPaneRatio, allowStudentResize, paneRatioCustomized: customized }) => {
+    const o = { enabled: true, leftPaneRatio };
+    if (allowStudentResize) o.allowStudentResize = true;
+    if (customized === false) o.paneRatioCustomized = false;
+    return o;
+  };
+
+  const tutorialRatioHint = resolveEffectivePaneRatio(tutorialLayoutSettings ?? null, null);
+
+  const handleToggleCustomPaneRatio = (checked) => {
+    if (checked) {
+      const seed = resolveEffectivePaneRatio(
+        tutorialLayoutSettings ?? null,
+        hasLayoutOverride && !paneRatioCustomized ? layoutOverride : null,
+      );
+      const n = Math.min(
+        LAYOUT_MAX_LEFT_RATIO,
+        Math.max(LAYOUT_MIN_LEFT_RATIO, seed),
+      );
+      onSlidePatch({
+        layoutOverride: buildSlideLayoutOverride({
+          leftPaneRatio: n,
+          allowStudentResize: layoutAllowStudentResize,
+          paneRatioCustomized: true,
+        }),
+      });
+    } else if (layoutAllowStudentResize) {
+      const base = resolveEffectivePaneRatio(tutorialLayoutSettings ?? null, null);
+      onSlidePatch({
+        layoutOverride: buildSlideLayoutOverride({
+          leftPaneRatio: base,
+          allowStudentResize: true,
+          paneRatioCustomized: false,
+        }),
+      });
+    } else {
+      onSlidePatch({ layoutOverride: null });
+    }
+  };
+
+  const handleSetLayoutRatio = (raw) => {
+    const n = Math.min(
+      LAYOUT_MAX_LEFT_RATIO,
+      Math.max(LAYOUT_MIN_LEFT_RATIO, parseInt(raw, 10) || LAYOUT_DEFAULT_LEFT_RATIO),
+    );
+    onSlidePatch({
+      layoutOverride: buildSlideLayoutOverride({
+        leftPaneRatio: n,
+        allowStudentResize: layoutAllowStudentResize,
+        paneRatioCustomized: true,
+      }),
+    });
+  };
+
+  const handleToggleAllowStudentResize = (checked) => {
+    if (checked) {
+      if (customPaneRatioEnabled) {
+        onSlidePatch({
+          layoutOverride: buildSlideLayoutOverride({
+            leftPaneRatio: layoutRatio,
+            allowStudentResize: true,
+            paneRatioCustomized: true,
+          }),
+        });
+      } else {
+        const base = resolveEffectivePaneRatio(tutorialLayoutSettings ?? null, null);
+        onSlidePatch({
+          layoutOverride: buildSlideLayoutOverride({
+            leftPaneRatio: base,
+            allowStudentResize: true,
+            paneRatioCustomized: false,
+          }),
+        });
+      }
+    } else if (customPaneRatioEnabled) {
+      onSlidePatch({
+        layoutOverride: buildSlideLayoutOverride({
+          leftPaneRatio: layoutRatio,
+          allowStudentResize: false,
+          paneRatioCustomized: true,
+        }),
+      });
+    } else {
+      onSlidePatch({ layoutOverride: null });
+    }
+  };
+  const propTokens     = override.tokens || {};
+  const [draftTokens, setDraftTokens] = useState(propTokens);
+
+  const slideId = slide.slideId;
+  useEffect(() => {
+    clearTimeout(patchTimerRef.current);
+    setDraftTokens(slide.themeOverride?.tokens || {});
+  }, [slideId]);
+  useEffect(() => () => clearTimeout(patchTimerRef.current), []);
+
+  const handleToggleTheme = (checked) => {
+    clearTimeout(patchTimerRef.current);
+    setDraftTokens({});
+    onSlidePatch({ themeOverride: checked ? { enabled: true, tokens: {} } : null });
+  };
+  const setToken = (key, value) => {
+    const next = { ...draftTokens, [key]: value };
+    setDraftTokens(next);
+    onSlidePatch({ themeOverride: { enabled: true, tokens: next } });
+  };
+  const setTokenDebounced = (key, value) => {
+    const next = { ...draftTokens, [key]: value };
+    setDraftTokens(next);
+    clearTimeout(patchTimerRef.current);
+    patchTimerRef.current = setTimeout(() => {
+      onSlidePatch({ themeOverride: { enabled: true, tokens: next } });
+    }, 400);
+  };
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const isBranch = Boolean(slide.isBranchSlide);
+
+  // Eligible parents: regular question slides that appear BEFORE this slide in order
+  // A branch fires after the parent question is answered, so a later slide as parent
+  // is semantically invalid and matches what the UI note already says.
+  const eligibleParents = useMemo(
+    () => getEligibleParentSlides(allSlides, slide.slideId)
+            .filter((s) => (s.order ?? 0) < (slide.order ?? Infinity)),
+    [allSlides, slide.slideId, slide.order]
+  );
+  const canBeBranch = eligibleParents.length > 0;
+
+  const slidesById = useMemo(() => buildSlidesById(allSlides), [allSlides]);
+  const regularSlides = useMemo(() => buildRegularSlideOrder(allSlides), [allSlides]);
+
+  const parentSlide  = slide.branchParentSlideId ? slidesById[slide.branchParentSlideId] : null;
+  const sourcePane   = parentSlide?.leftPane;
+  const isMCQSource  = sourcePane?.type === 'question';
+  const isTextSource = sourcePane?.type === 'textQuestion';
+
+  const cfg = slide.branchConfig || {};
+
+  //helper: 1-based label for a regular slide
+  const regularLabel = (s) => {
+    const idx = regularSlides.findIndex((r) => r.slideId === s.slideId);
+    return idx >= 0 ? `Slide ${idx + 1}: ${s.title || 'Untitled'}` : s.title || 'Untitled';
+  };
+
+  //handlers
+  const patch = (updates) => {
+    onSlidePatch(updates);
+  };
+
+  const handleToggleBranch = (checked) => {
+    if (checked) {
+      const firstParent = eligibleParents[0];
+      const pid = firstParent?.slideId || null;
+      patch({
+        isBranchSlide: true,
+        branchParentSlideId: pid,
+        branchConfig: pid
+          ? { sourceSlideId: pid, operator: 'isNot', matchType: 'correctness', optionId: null, correctness: 'correct' }
+          : null,
+      });
+    } else {
+      patch({ isBranchSlide: false, branchParentSlideId: null, branchConfig: null });
+    }
+    onBlur?.();
+  };
+
+  const handleParentChange = (pid) => {
+    const p = slidesById[pid];
+    const pType = p?.leftPane?.type;
+    let newCfg = null;
+    if (pType === 'question' || pType === 'textQuestion') {
+      newCfg = { sourceSlideId: pid, operator: 'isNot', matchType: 'correctness', optionId: null, correctness: 'correct' };
+    }
+    patch({ branchParentSlideId: pid, branchConfig: newCfg });
+    onBlur?.();
+  };
+
+  const handleOperatorChange = (operator) => {
+    if (operator === 'is') {
+      const options   = sourcePane?.data?.options || [];
+      const correctId = sourcePane?.data?.correctOptionId;
+      const wrongOpts = options.filter((o) => o.id !== correctId);
+      patch({ branchConfig: { ...cfg, operator: 'is', matchType: 'option', optionId: wrongOpts[0]?.id || null, correctness: null } });
+    } else {
+      patch({ branchConfig: { ...cfg, operator: 'isNot', matchType: 'correctness', optionId: null, correctness: 'correct' } });
+    }
+    onBlur?.();
+  };
+
+  const handleOptionChange = (optionId) => {
+    patch({ branchConfig: { ...cfg, optionId } });
+    onBlur?.();
+  };
+
+  //branch validation errors for inline display
+  const branchErrors = useMemo(
+    () => (isBranch ? validateBranchConfig(slide, allSlides) : []),
+    [isBranch, slide, allSlides]
+  );
+
+  return (
+    <div style={styles.configurationsContainer}>
+      <button
+        type="button"
+        style={styles.configurationsToggle}
+        onClick={() => setExpanded((p) => !p)}
+        aria-expanded={expanded}
+      >
+        <span style={styles.configurationsChevron}>{expanded ? '▼' : '▶'}</span>
+        Slide Configurations
+        {themeEnabled && (
+          <span style={{ fontSize: "11px", fontWeight: "500", backgroundColor: "#dbeafe", color: "#1d4ed8", padding: "1px 7px", borderRadius: "9999px", marginLeft: "8px" }}>
+            Theme override
+          </span>
+        )}
+      </button>
+
+      {expanded && (
+        <div style={styles.configurationsBody}>
+          {/* ── Checkbox ── */}
+          <label style={styles.branchCheckboxLabel}>
+            <input
+              type="checkbox"
+              checked={isBranch}
+              disabled={isPublished || (!isBranch && !canBeBranch)}
+              onChange={isPublished ? undefined : (e) => handleToggleBranch(e.target.checked)}
+              style={{ marginRight: '8px', cursor: isPublished ? 'default' : 'pointer' }}
+            />
+            Display slide conditionally
+          </label>
+
+          {/* Explain when unavailable */}
+          {!isBranch && !canBeBranch && (
+            <p style={styles.branchNote}>
+              Conditional display requires at least one question slide (MCQ or text question) to exist before this slide. Rich text, embed, and media slides cannot be used as branch sources.
+            </p>
+          )}
+
+          {/* ── Branch config form ── */}
+          {isBranch && (
+            <div style={styles.branchConfigForm}>
+              {/* Parent selector */}
+              <div style={styles.branchField}>
+                <label style={styles.branchLabel}>Parent slide (question source):</label>
+                <select
+                  value={slide.branchParentSlideId || ''}
+                  disabled={isPublished}
+                  onChange={isPublished ? undefined : (e) => handleParentChange(e.target.value)}
+                  style={{ ...styles.branchSelect, ...(isPublished ? styles.readOnlyInput : {}) }}
+                >
+                  <option value="">-- Select parent slide --</option>
+                  {eligibleParents.map((p) => (
+                    <option key={p.slideId} value={p.slideId}>
+                      {regularLabel(p)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Condition builder */}
+              {parentSlide && isMCQSource && (
+                <div style={styles.branchConditionRow}>
+                  <span style={styles.branchConditionText}>Display this slide if</span>
+                  <strong style={styles.branchConditionText}>{regularLabel(parentSlide)}</strong>
+
+                  {/* Operator */}
+                  <select
+                    value={cfg.operator || 'isNot'}
+                    disabled={isPublished}
+                    onChange={isPublished ? undefined : (e) => handleOperatorChange(e.target.value)}
+                    style={{ ...styles.branchSelect, ...styles.branchInlineSelect, ...(isPublished ? styles.readOnlyInput : {}) }}
+                  >
+                    <option value="is">is</option>
+                    <option value="isNot">is not</option>
+                  </select>
+
+                  {/* Value */}
+                  {cfg.operator === 'is' ? (
+                    <select
+                      value={cfg.optionId || ''}
+                      disabled={isPublished}
+                      onChange={isPublished ? undefined : (e) => handleOptionChange(e.target.value)}
+                      style={{ ...styles.branchSelect, ...styles.branchInlineSelect, ...(isPublished ? styles.readOnlyInput : {}) }}
+                    >
+                      <option value="">-- option --</option>
+                      {(sourcePane?.data?.options || [])
+                        .filter((o) => o.id !== sourcePane?.data?.correctOptionId)
+                        .map((o) => (
+                          <option key={o.id} value={o.id}>
+                            {o.id.toUpperCase()}. {o.text || '(empty)'}
+                          </option>
+                        ))}
+                    </select>
+                  ) : (
+                    <select
+                      disabled
+                      style={{ ...styles.branchSelect, ...styles.branchInlineSelect, ...styles.readOnlyInput }}
+                    >
+                      <option>correct</option>
+                    </select>
+                  )}
+                </div>
+              )}
+
+              {parentSlide && isTextSource && (
+                <div style={styles.branchConditionRow}>
+                  <span style={styles.branchConditionText}>
+                    Display this slide if <strong>{regularLabel(parentSlide)}</strong> is not correct
+                  </span>
+                  <span style={styles.branchNote}>
+                    (Text questions only support this condition.)
+                  </span>
+                </div>
+              )}
+
+              {!parentSlide && (
+                <p style={styles.branchNote}>Select a parent slide above to configure the condition.</p>
+              )}
+
+              {/* Inline validation errors */}
+              {branchErrors.length > 0 && (
+                <div style={styles.branchErrorList}>
+                  {branchErrors.map((err, i) => (
+                    <div key={i} style={styles.branchErrorItem}>{err}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Branch section helper — always visible */}
+          <p style={{ fontSize: "12px", color: "#9ca3af", margin: "8px 0 0 0" }}>
+            Use this to show a slide only when a student answers a specific question in a particular way.
+          </p>
+
+          {/* ── Theme Override ── */}
+          <div style={{ borderTop: "1px solid #e5e7eb", marginTop: "12px", paddingTop: "12px" }}>
+            <label style={styles.branchCheckboxLabel}>
+              <input
+                type="checkbox"
+                checked={themeEnabled}
+                disabled={isPublished}
+                onChange={(e) => handleToggleTheme(e.target.checked)}
+                style={{ marginRight: "8px", cursor: isPublished ? "default" : "pointer" }}
+              />
+              Override theme for this slide
+            </label>
+            <p style={{ fontSize: "12px", color: "#9ca3af", margin: "4px 0 0 0" }}>
+              Overrides the tutorial theme for this slide's playback shell. Leave a token blank to inherit.
+            </p>
+            {themeEnabled && (
+              <div style={{ marginTop: "8px" }}>
+                {THEME_FIELD_DEFS.map(({ key, label, type, options }) => (
+                  <div key={key}>
+                    <label style={{ display: "block", fontSize: "12px", fontWeight: "500", color: "#374151", marginBottom: "4px" }}>{label}</label>
+                    {type === "color" && (
+                      <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "10px" }}>
+                        <input
+                          type="color"
+                          value={draftTokens[key] || THEME_TOKEN_DEFAULTS[key] || "#ffffff"}
+                          disabled={isPublished}
+                          onChange={(e) => setTokenDebounced(key, e.target.value)}
+                          style={{ width: "36px", height: "28px", border: "none", cursor: isPublished ? "not-allowed" : "pointer" }}
+                        />
+                        <input
+                          type="text"
+                          value={draftTokens[key] || ""}
+                          disabled={isPublished}
+                          onChange={(e) => setTokenDebounced(key, e.target.value)}
+                          placeholder={`inherit (${THEME_TOKEN_DEFAULTS[key]})`}
+                          maxLength={7}
+                          style={{ width: "150px", padding: "4px 8px", fontSize: "13px", border: "1px solid #d1d5db", borderRadius: "4px", boxSizing: "border-box" }}
+                        />
+                      </div>
+                    )}
+                    {type === "select" && (
+                      <select
+                        value={draftTokens[key] || ""}
+                        disabled={isPublished}
+                        onChange={(e) => setToken(key, e.target.value)}
+                        style={{ width: "100%", padding: "6px 8px", fontSize: "13px", border: "1px solid #d1d5db", borderRadius: "4px", backgroundColor: "#fff", marginBottom: "10px", boxSizing: "border-box" }}
+                      >
+                        <option value="">— inherit from tutorial theme —</option>
+                        {options.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    )}
+                    {type === "bool" && (
+                      <label style={{ display: "flex", gap: "6px", alignItems: "center", cursor: isPublished ? "not-allowed" : "pointer", marginBottom: "10px", fontSize: "13px" }}>
+                        <input
+                          type="checkbox"
+                          checked={key in draftTokens ? !!draftTokens[key] : !!THEME_TOKEN_DEFAULTS[key]}
+                          disabled={isPublished}
+                          onChange={(e) => setToken(key, e.target.checked)}
+                        />
+                        {label}
+                      </label>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── Layout: custom pane ratio ── */}
+          <div style={{ borderTop: "1px solid #e5e7eb", marginTop: "12px", paddingTop: "12px" }}>
+            <label style={styles.branchCheckboxLabel}>
+              <input
+                type="checkbox"
+                checked={customPaneRatioEnabled}
+                disabled={isPublished}
+                onChange={(e) => handleToggleCustomPaneRatio(e.target.checked)}
+                style={{ marginRight: "8px", cursor: isPublished ? "default" : "pointer" }}
+              />
+              Override pane ratio for this slide
+            </label>
+            <p style={{ fontSize: "12px", color: "#9ca3af", margin: "4px 0 0 0" }}>
+              Fix a left/right width split for this slide instead of using the tutorial default ({tutorialRatioHint}% left).
+            </p>
+            {customPaneRatioEnabled && (
+              <div style={{ marginTop: "10px" }}>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: "500", color: "#374151", marginBottom: "4px" }}>
+                  Left pane width
+                </label>
+                <input
+                  type="range"
+                  min={LAYOUT_MIN_LEFT_RATIO}
+                  max={LAYOUT_MAX_LEFT_RATIO}
+                  step="1"
+                  value={layoutRatio}
+                  disabled={isPublished}
+                  onChange={(e) => handleSetLayoutRatio(e.target.value)}
+                  style={{ width: "100%", cursor: isPublished ? "not-allowed" : "pointer" }}
+                />
+                <p style={{ fontSize: "12px", color: "#6b7280", margin: "4px 0 0 0" }}>
+                  Left pane: {layoutRatio}% · Right pane: {100 - layoutRatio}%
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* ── Student pane resize (always listed like other options) ── */}
+          <div style={{ borderTop: "1px solid #e5e7eb", marginTop: "12px", paddingTop: "12px" }}>
+            <label style={styles.branchCheckboxLabel}>
+              <input
+                type="checkbox"
+                checked={layoutAllowStudentResize}
+                disabled={isPublished}
+                onChange={(e) => handleToggleAllowStudentResize(e.target.checked)}
+                style={{ marginRight: "8px", cursor: isPublished ? "default" : "pointer" }}
+              />
+              Allow students to resize slide
+            </label>
+            <p style={{ fontSize: "12px", color: "#9ca3af", margin: "4px 0 0 28px" }}>
+              {customPaneRatioEnabled
+                ? "During playback, learners can opt in to adjust the split. The override slider is their default until they change it."
+                : `During playback, learners can opt in to adjust the split. Default follows the tutorial layout (${tutorialRatioHint}% left) until they change it.`}
+            </p>
+          </div>
         </div>
       )}
     </div>
@@ -592,6 +1354,27 @@ export default function TutorialEditorPage() {
   const [saveStatus, setSaveStatus] = useState("");
   const [draggedSlideId, setDraggedSlideId] = useState(null);
   const [dragOverSlideId, setDragOverSlideId] = useState(null);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editingTitleValue, setEditingTitleValue] = useState("");
+  const titleInputRef = useRef(null);
+
+  // Certificate settings state
+  const [certSettings, setCertSettings]         = useState({ enabled: false, template_id: null, issuer_name: "" });
+  const [certTemplates, setCertTemplates]       = useState([]);
+  const [certSaving, setCertSaving]             = useState(false);
+  const [certSaveStatus, setCertSaveStatus]     = useState("");
+
+  // Theme settings state
+  const [themeSettings, setThemeSettings]       = useState({ theme_id: null });
+  const [availableThemes, setAvailableThemes]   = useState([]);
+  const [themeSaveStatus, setThemeSaveStatus]   = useState("");
+
+  // Layout settings state (tutorial-wide pane ratio)
+  const [layoutSettings, setLayoutSettings]     = useState({ leftPaneRatio: null });
+  const [layoutSaveStatus, setLayoutSaveStatus] = useState("");
+
+  // Tutorial-wide settings modal
+  const [showTutorialSettings, setShowTutorialSettings] = useState(false);
 
   // fetch tutorial on mount
   useEffect(() => {
@@ -599,7 +1382,9 @@ export default function TutorialEditorPage() {
       try {
         setLoading(true);
         const data = await getTutorial(id);
+        // Update both state AND ref
         setTutorial(data);
+        tutorialRef.current = data;
         // set first slide as active by default
         if (data.slides && data.slides.length > 0) {
           setActiveSlideId(data.slides[0].slideId);
@@ -613,43 +1398,126 @@ export default function TutorialEditorPage() {
     fetchTutorial();
   }, [id]);
 
+  // Load certificate + theme + layout settings and available templates alongside the tutorial
+  useEffect(() => {
+    if (!id) return;
+    Promise.all([
+      getTutorialCertSettings(id).catch(() => null),
+      listTemplates().catch(() => []),
+      getTutorialThemeSettings(id).catch(() => null),
+      listTutorialThemes().catch(() => []),
+      getTutorialLayoutSettings(id).catch(() => null),
+    ]).then(([settings, templates, themeSettingsData, themes, layoutSettingsData]) => {
+      if (settings) setCertSettings(settings);
+      if (templates) setCertTemplates(templates);
+      if (themeSettingsData) {
+        const tid = themeSettingsData.theme_id;
+        const list = Array.isArray(themes) ? themes : [];
+        if (tid != null && Number(tid) > 0 && list.length > 0 && !list.some((t) => Number(t.id) === Number(tid))) {
+          setThemeSettings({ theme_id: null });
+        } else {
+          setThemeSettings(themeSettingsData);
+        }
+      }
+      if (themes) setAvailableThemes(themes);
+      if (layoutSettingsData) setLayoutSettings(layoutSettingsData);
+    });
+  }, [id]);
+
   // get the active slide object
   const activeSlide = tutorial?.slides?.find((s) => s.slideId === activeSlideId);
+  const isPublished = tutorial?.status === "published";
+
+  // Use a ref to always have access to the latest tutorial state
+  const tutorialRef = useRef(tutorial);
+  
+  // Helper to update tutorial state AND ref synchronously
+  // Includes safety checks to prevent data corruption
+  const updateTutorialState = useCallback((updater) => {
+    setTutorial((prev) => {
+      const newState = typeof updater === 'function' ? updater(prev) : updater;
+      
+      // Safety check: prevent accidentally wiping out slides
+      if (prev?.slides?.length > 0 && (!newState?.slides || newState.slides.length === 0)) {
+        return prev; // Keep the old state
+      }
+      
+      tutorialRef.current = newState; // Update ref synchronously
+      return newState;
+    });
+  }, []);
 
   // persist slide changes to backend, it accepts the slide data directly to avoid a stale state
+  // Does NOT update local state from API response to avoid overwriting in-progress edits
   const persistSlideUpdate = async (slideData) => {
-    if (!slideData || !slideData.slideId) return;
+    if (!slideData || !slideData.slideId) {
+      return;
+    }
+
+    const payload = {
+      slides: [{
+        slideId:             slideData.slideId,
+        title:               slideData.title,
+        order:               slideData.order,
+        leftPane:            slideData.leftPane,
+        rightPane:           slideData.rightPane,
+        isBranchSlide:       slideData.isBranchSlide       ?? false,
+        branchParentSlideId: slideData.branchParentSlideId ?? null,
+        branchConfig:        slideData.branchConfig        ?? null,
+        themeOverride:       slideData.themeOverride       ?? null,
+        layoutOverride:      slideData.layoutOverride      ?? null,
+      }],
+    };
 
     setSaveStatus("Saving...");
     try {
-      const updatedTutorial = await updateTutorial(id, {
-        slides: [{
-          slideId: slideData.slideId,
-          title: slideData.title,
-          order: slideData.order,
-          leftPane: slideData.leftPane,
-          rightPane: slideData.rightPane,
-        }],
-      });
-      setTutorial(updatedTutorial);
+      await updateTutorial(id, payload);
       setSaveStatus("Saved");
       setTimeout(() => setSaveStatus(""), 2000);
     } catch (err) {
+      console.error("Error saving slide:", err);
       setSaveStatus("Error saving");
     }
   };
 
   // helper to get current slide and persist, used by the blur handlers
-  const persistCurrentSlide = (slideId) => {
-    const currentSlide = tutorial?.slides?.find((s) => s.slideId === slideId);
+  // Uses tutorialRef to avoid stale closure issues
+  const persistCurrentSlide = useCallback((slideId) => {
+    const currentSlide = tutorialRef.current?.slides?.find((s) => s.slideId === slideId);
     if (currentSlide) {
       persistSlideUpdate(currentSlide);
+    }
+  }, [id]);
+
+  // handle tutorial title edit and persist
+  const handleTutorialTitleBlur = async () => {
+    const newTitle = editingTitleValue.trim();
+    setIsEditingTitle(false);
+    
+    if (!newTitle || newTitle === tutorial.title) {
+      // No change or empty, revert
+      setEditingTitleValue(tutorial.title || "");
+      return;
+    }
+    
+    // Update local state
+    updateTutorialState((prev) => ({ ...prev, title: newTitle }));
+    
+    // Persist to backend
+    setSaveStatus("Saving...");
+    try {
+      await updateTutorial(id, { title: newTitle });
+      setSaveStatus("Saved");
+      setTimeout(() => setSaveStatus(""), 2000);
+    } catch (err) {
+      console.error("Error saving title:", err);
+      setSaveStatus("Error saving");
     }
   };
 
   // handle slide title change, local update only
   const handleTitleChange = (slideId, newTitle) => {
-    setTutorial((prev) => ({
+    updateTutorialState((prev) => ({
       ...prev,
       slides: prev.slides.map((s) =>
         s.slideId === slideId ? { ...s, title: newTitle } : s
@@ -717,7 +1585,7 @@ export default function TutorialEditorPage() {
           questionType: "textInput",
           questionTitle: "",
           description: "",
-          correctAnswer: "",
+          correctAnswers: [""],
           caseSensitive: false,
           required: true,
           feedback: {
@@ -734,6 +1602,9 @@ export default function TutorialEditorPage() {
           url: "",
           attachmentId: null,
           altText: "",
+          filename: "",
+          originalName: "",
+          mimeType: "",
         },
       };
     }
@@ -741,7 +1612,7 @@ export default function TutorialEditorPage() {
     const updatedSlide = { ...currentSlide, [paneKey]: paneData };
     
     // update the local state
-    setTutorial((prev) => ({
+    updateTutorialState((prev) => ({
       ...prev,
       slides: prev.slides.map((s) =>
         s.slideId === slideId ? updatedSlide : s
@@ -754,15 +1625,19 @@ export default function TutorialEditorPage() {
 
   // handle pane content edit, should be local update only
   const handlePaneContentChange = (slideId, paneKey, pane, updates) => {
-    const updatedPane = {
-      ...pane,
-      data: { ...pane.data, ...updates },
-    };
-    setTutorial((prev) => ({
+    updateTutorialState((prev) => ({
       ...prev,
-      slides: prev.slides.map((s) =>
-        s.slideId === slideId ? { ...s, [paneKey]: updatedPane } : s
-      ),
+      slides: prev.slides.map((s) => {
+        if (s.slideId !== slideId) return s;
+        const currentPane = s[paneKey] || pane;
+        return {
+          ...s,
+          [paneKey]: {
+            ...currentPane,
+            data: { ...currentPane.data, ...updates },
+          },
+        };
+      }),
     }));
   };
 
@@ -829,7 +1704,7 @@ export default function TutorialEditorPage() {
     }));
 
     // update local state immediately for responsiveness
-    setTutorial((prev) => ({
+    updateTutorialState((prev) => ({
       ...prev,
       slides: reorderedSlides,
     }));
@@ -838,14 +1713,70 @@ export default function TutorialEditorPage() {
     // persist all slides with updated order to backend
     setSaveStatus("Saving...");
     try {
-      const updatedTutorial = await updateTutorial(id, {
+      await updateTutorial(id, {
         slides: reorderedSlides,
       });
-      setTutorial(updatedTutorial);
       setSaveStatus("Saved");
       setTimeout(() => setSaveStatus(""), 2000);
     } catch (err) {
       setSaveStatus("Error saving");
+    }
+  };
+
+  // Save certificate + theme + layout settings and close the modal.
+  // Keeps the modal open during the request so success/error is visible.
+  const handleCloseTutorialSettings = async () => {
+    setCertSaving(true);
+    setCertSaveStatus("");
+    setThemeSaveStatus("");
+    setLayoutSaveStatus("");
+
+    // Save independently so a failure in one doesn't suppress the other's result.
+    const [certResult, themeResult, layoutResult] = await Promise.allSettled([
+      saveTutorialCertSettings(id, {
+        enabled:    certSettings.enabled,
+        templateId: certSettings.template_id || 0,
+        issuerName: certSettings.issuer_name || "",
+      }),
+      saveTutorialThemeSettings(id, { themeId: themeSettings.theme_id || null }),
+      saveTutorialLayoutSettings(id, { leftPaneRatio: layoutSettings.leftPaneRatio ?? null }),
+    ]);
+
+    if (certResult.status === "fulfilled") {
+      setCertSettings(certResult.value);
+      setCertSaveStatus("Saved");
+    } else {
+      setCertSaveStatus("Error: " + certResult.reason?.message);
+    }
+
+    if (themeResult.status === "fulfilled") {
+      setThemeSettings(themeResult.value);
+      setThemeSaveStatus("Saved");
+    } else {
+      setThemeSaveStatus("Error: " + themeResult.reason?.message);
+    }
+
+    if (layoutResult.status === "fulfilled") {
+      setLayoutSettings(layoutResult.value);
+      setLayoutSaveStatus("Saved");
+    } else {
+      setLayoutSaveStatus("Error: " + layoutResult.reason?.message);
+    }
+
+    setCertSaving(false);
+
+    // Only close if all three saved successfully.
+    if (
+      certResult.status === "fulfilled" &&
+      themeResult.status === "fulfilled" &&
+      layoutResult.status === "fulfilled"
+    ) {
+      setTimeout(() => {
+        setShowTutorialSettings(false);
+        setCertSaveStatus("");
+        setThemeSaveStatus("");
+        setLayoutSaveStatus("");
+      }, 600);
     }
   };
 
@@ -862,6 +1793,97 @@ export default function TutorialEditorPage() {
     });
   };
 
+  // validate a single pane and return array of error strings
+  const validatePane = (pane, paneLabel) => {
+    const errors = [];
+    if (!pane || !pane.type) {
+      errors.push(`${paneLabel}: No content type selected`);
+      return errors;
+    }
+
+    switch (pane.type) {
+      case "text":
+        if (!pane.data?.content || !pane.data.content.replace(/<[^>]*>/g, "").trim()) {
+          errors.push(`${paneLabel}: Rich text content cannot be empty`);
+        }
+        break;
+      case "question":
+        if (!pane.data?.questionTitle?.trim()) {
+          errors.push(`${paneLabel}: Question title is required`);
+        }
+        if (!pane.data?.options || pane.data.options.length < 2) {
+          errors.push(`${paneLabel}: At least 2 answer options are required`);
+        } else if (pane.data.options.some((o) => !o.text?.trim())) {
+          errors.push(`${paneLabel}: All answer options must have text`);
+        }
+        if (!pane.data?.correctOptionId) {
+          errors.push(`${paneLabel}: A correct answer must be selected`);
+        }
+        break;
+      case "textQuestion":
+        if (!pane.data?.questionTitle?.trim()) {
+          errors.push(`${paneLabel}: Question title is required`);
+        }
+        {
+          // support both legacy correctAnswer and new correctAnswers array
+          const answers = pane.data?.correctAnswers || (pane.data?.correctAnswer ? [pane.data.correctAnswer] : []);
+          if (!answers.some((a) => a?.trim())) {
+            errors.push(`${paneLabel}: At least one correct answer is required`);
+          }
+        }
+        break;
+      case "embed":
+        if (!pane.data?.url?.trim()) {
+          errors.push(`${paneLabel}: Embed URL is required`);
+        } else {
+          try {
+            new URL(pane.data.url.trim());
+          } catch {
+            errors.push(`${paneLabel}: Embed URL is not a valid URL`);
+          }
+        }
+        break;
+      case "media":
+        if (!pane.data?.url) {
+          errors.push(`${paneLabel}: No media file selected`);
+        }
+        break;
+      default:
+        break;
+    }
+    return errors;
+  };
+
+  // get all validation errors for a slide (pane content + branch config)
+  const getSlideValidationErrors = (slide) => {
+    if (!slide) return [];
+    const errors = [];
+    errors.push(...validatePane(slide.leftPane, "Left Pane"));
+    errors.push(...validatePane(slide.rightPane, "Right Pane"));
+    //branch config validation (only for branch slides)
+    if (slide.isBranchSlide) {
+      errors.push(...validateBranchConfig(slide, tutorial?.slides || []));
+    }
+    return errors;
+  };
+
+  // memoize validation results for all slides to avoid recomputing on every render
+  const validationMap = useMemo(() => {
+    const map = {};
+    (tutorial?.slides || []).forEach((slide) => {
+      map[slide.slideId] = getSlideValidationErrors(slide);
+    });
+    return map;
+  }, [tutorial?.slides]);
+
+  // Memoized so validation stays cheap for tutorials with many slides.
+  // check if a slide is valid using the memoized map
+  const isSlideValid = (slide) => (validationMap[slide?.slideId] || []).length === 0;
+
+  // active slide validation from the memoized map
+  const activeSlideErrors = activeSlide ? (validationMap[activeSlide.slideId] || []) : [];
+  const isActiveSlideValid = activeSlideErrors.length === 0;
+
   // add a new slide
   const handleAddSlide = async () => {
     if (!tutorial) {
@@ -870,15 +1892,18 @@ export default function TutorialEditorPage() {
 
     const maxOrder = tutorial.slides?.reduce((max, s) => Math.max(max, s.order || 0), 0) || 0;
     const newSlide = {
-      slideId: generateUUID(),
-      title: "Untitled Slide",
-      order: maxOrder + 1,
-      leftPane: null,
-      rightPane: null,
+      slideId:             generateUUID(),
+      title:               "Untitled Slide",
+      order:               maxOrder + 1,
+      leftPane:            null,
+      rightPane:           null,
+      isBranchSlide:       false,
+      branchParentSlideId: null,
+      branchConfig:        null,
     };
 
     // add to local state first
-    setTutorial((prev) => ({
+    updateTutorialState((prev) => ({
       ...prev,
       slides: [...(prev.slides || []), newSlide],
     }));
@@ -889,21 +1914,93 @@ export default function TutorialEditorPage() {
     // persist data to the backend
     setSaveStatus("Saving...");
     try {
-      const updatedTutorial = await updateTutorial(id, {
+      await updateTutorial(id, {
         slides: [newSlide],
       });
-      setTutorial(updatedTutorial);
-      // ensuring that the new slide stays active
-      const savedSlide = updatedTutorial.slides?.find((s) => s.slideId === newSlide.slideId);
-      if (savedSlide) {
-        setActiveSlideId(savedSlide.slideId);
-      }
       setSaveStatus("Saved");
       setTimeout(() => setSaveStatus(""), 2000);
     } catch (err) {
       setSaveStatus("Error saving");
     }
   };
+
+  // delete a slide
+  const handleDeleteSlide = async (slideId) => {
+    if (!tutorial || !tutorial.slides) return;
+
+    const slide = tutorial.slides.find((s) => s.slideId === slideId);
+    if (!slide) return;
+
+    //block deletion if this slide has any branch children
+    const branchChildMap = buildBranchChildrenMap(tutorial.slides);
+    const childBranches  = branchChildMap[slideId] || [];
+    if (childBranches.length > 0) {
+      alert(
+        `Cannot delete "${slide.title || 'Untitled Slide'}" because it has ${childBranches.length} branch slide(s) attached to it.\n\nPlease delete or reconfigure those branch slides first, then try again.`
+      );
+      return;
+    }
+
+    //a tutorial must have at least 2 regular slides (matching the publish requirement)
+    const nonBranchCount = (tutorial.slides || []).filter((s) => !s.isBranchSlide).length;
+    if (!slide.isBranchSlide && nonBranchCount <= 2) {
+      alert("Cannot delete this slide. A tutorial must have at least 2 regular slides.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete "${slide.title || 'Untitled Slide'}"?\n\nThis action cannot be undone. All content in this slide will be permanently lost.`
+    );
+    if (!confirmed) return;
+
+    // Find the sorted slides and determine next slide to jump to
+    const sortedSlides = [...tutorial.slides].sort((a, b) => a.order - b.order);
+    const deleteIndex = sortedSlides.findIndex((s) => s.slideId === slideId);
+    const remaining = sortedSlides.filter((s) => s.slideId !== slideId);
+
+    // Reorder remaining slides (1-based)
+    const reorderedSlides = remaining.map((s, idx) => ({
+      ...s,
+      order: idx + 1,
+    }));
+
+    // Determine next active slide
+    const nextIndex = Math.min(deleteIndex, reorderedSlides.length - 1);
+    const nextSlide = reorderedSlides[nextIndex];
+
+    // Update local state immediately
+    updateTutorialState((prev) => ({
+      ...prev,
+      slides: reorderedSlides,
+    }));
+    setActiveSlideId(nextSlide?.slideId || null);
+
+    // Persist to backend
+    setSaveStatus("Deleting...");
+    try {
+      await updateTutorial(id, {
+        deleteSlideIds: [slideId],
+      });
+      setSaveStatus("Deleted");
+      setTimeout(() => setSaveStatus(""), 2000);
+    } catch (err) {
+      console.error("Error deleting slide:", err);
+      setSaveStatus("Error deleting");
+    }
+  };
+
+  //patch arbitrary fields on the active slide (used by BranchConfigEditor).
+  //updates local state and persists.
+  const handleSlidePatch = useCallback((slideId, updates) => {
+    updateTutorialState((prev) => ({
+      ...prev,
+      slides: prev.slides.map((s) =>
+        s.slideId === slideId ? { ...s, ...updates } : s
+      ),
+    }));
+    // Persist after state is updated via the ref
+    setTimeout(() => persistCurrentSlide(slideId), 0);
+  }, [persistCurrentSlide]);
 
   // render a pane editor
   const renderPaneEditor = (slideId, paneKey, pane, allowedTypes) => {
@@ -915,7 +2012,7 @@ export default function TutorialEditorPage() {
       embed: "Embed",
       question: "Question (MCQ)",
       textQuestion: "Question (Text)",
-      media: "Media (Image/Video)",
+      media: "Media (image, video, audio, PDF, files)",
     };
 
     return (
@@ -925,8 +2022,9 @@ export default function TutorialEditorPage() {
         </label>
         <select
           value={currentType}
-          onChange={(e) => handlePaneTypeChange(slideId, paneKey, e.target.value)}
-          style={styles.select}
+          onChange={isPublished ? undefined : (e) => handlePaneTypeChange(slideId, paneKey, e.target.value)}
+          disabled={isPublished}
+          style={{ ...styles.select, ...(isPublished ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
         >
           <option value="">-- Select type --</option>
           {allowedTypes.map((t) => (
@@ -941,15 +2039,19 @@ export default function TutorialEditorPage() {
         )}
 
         {pane?.type === "text" && (
-          <WysiwygEditor
-            key={`${slideId}-${paneKey}`}
-            editorId={`gots-wysiwyg-${slideId}-${paneKey}`}
-            value={pane.data?.content || ""}
-            onChange={(content) =>
-              handlePaneContentChange(slideId, paneKey, pane, { content })
-            }
-            onBlur={() => handlePaneContentBlur(slideId)}
-          />
+          isPublished ? (
+            <WysiwygReadOnly key={`${slideId}-${paneKey}`} value={pane.data?.content || ""} />
+          ) : (
+            <WysiwygEditor
+              key={`${slideId}-${paneKey}`}
+              editorId={`gots-wysiwyg-${slideId}-${paneKey}`}
+              value={pane.data?.content || ""}
+              onChange={(content) =>
+                handlePaneContentChange(slideId, paneKey, pane, { content })
+              }
+              onBlur={() => handlePaneContentBlur(slideId)}
+            />
+          )
         )}
 
         {pane?.type === "question" && (
@@ -958,15 +2060,17 @@ export default function TutorialEditorPage() {
             editorId={`gots-mcq-${slideId}-${paneKey}`}
             data={pane.data}
             onChange={(questionData) => {
-              const updatedPane = { ...pane, data: questionData };
-              setTutorial((prev) => ({
+              updateTutorialState((prev) => ({
                 ...prev,
-                slides: prev.slides.map((s) =>
-                  s.slideId === slideId ? { ...s, [paneKey]: updatedPane } : s
-                ),
+                slides: prev.slides.map((s) => {
+                  if (s.slideId !== slideId) return s;
+                  const currentPane = s[paneKey];
+                  return { ...s, [paneKey]: { ...currentPane, data: questionData } };
+                }),
               }));
             }}
             onBlur={() => handlePaneContentBlur(slideId)}
+            readOnly={isPublished}
           />
         )}
 
@@ -976,15 +2080,17 @@ export default function TutorialEditorPage() {
             editorId={`gots-textq-${slideId}-${paneKey}`}
             data={pane.data}
             onChange={(questionData) => {
-              const updatedPane = { ...pane, data: questionData };
-              setTutorial((prev) => ({
+              updateTutorialState((prev) => ({
                 ...prev,
-                slides: prev.slides.map((s) =>
-                  s.slideId === slideId ? { ...s, [paneKey]: updatedPane } : s
-                ),
+                slides: prev.slides.map((s) => {
+                  if (s.slideId !== slideId) return s;
+                  const currentPane = s[paneKey];
+                  return { ...s, [paneKey]: { ...currentPane, data: questionData } };
+                }),
               }));
             }}
             onBlur={() => handlePaneContentBlur(slideId)}
+            readOnly={isPublished}
           />
         )}
 
@@ -992,24 +2098,19 @@ export default function TutorialEditorPage() {
           <div style={styles.embedInputs}>
             <input
               type="text"
-              placeholder="Embed URL"
-              style={styles.input}
+              placeholder="Embed URL (e.g., YouTube, Vimeo, or any embeddable link)"
+              style={{ ...styles.input, ...(isPublished ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}) }}
               value={pane.data?.url || ""}
-              onChange={(e) =>
+              onChange={isPublished ? undefined : (e) =>
                 handlePaneContentChange(slideId, paneKey, pane, { url: e.target.value })
               }
-              onBlur={() => handlePaneContentBlur(slideId)}
+              onBlur={isPublished ? undefined : () => handlePaneContentBlur(slideId)}
+              readOnly={isPublished}
             />
-            <input
-              type="text"
-              placeholder="Fallback text (optional)"
-              style={styles.input}
-              value={pane.data?.fallbackText || ""}
-              onChange={(e) =>
-                handlePaneContentChange(slideId, paneKey, pane, { fallbackText: e.target.value })
-              }
-              onBlur={() => handlePaneContentBlur(slideId)}
-            />
+            <p style={styles.embedHint}>
+              Tip: For YouTube, you can paste the regular watch URL (e.g., youtube.com/watch?v=...) 
+              and it will be automatically converted to an embed URL.
+            </p>
           </div>
         )}
 
@@ -1017,14 +2118,29 @@ export default function TutorialEditorPage() {
           <MediaUploadEditor
             key={`${slideId}-${paneKey}`}
             data={pane.data}
-            onChange={(mediaData) => {
-              const updatedPane = { ...pane, data: mediaData };
-              setTutorial((prev) => ({
-                ...prev,
-                slides: prev.slides.map((s) =>
-                  s.slideId === slideId ? { ...s, [paneKey]: updatedPane } : s
-                ),
-              }));
+            readOnly={isPublished}
+            onChange={(mediaData, shouldPersist = false) => {
+              // Update local state and ref synchronously
+              updateTutorialState((prev) => {
+                const newTutorial = {
+                  ...prev,
+                  slides: prev.slides.map((s) => {
+                    if (s.slideId !== slideId) return s;
+                    const currentPane = s[paneKey];
+                    return { ...s, [paneKey]: { ...currentPane, data: mediaData } };
+                  }),
+                };
+                
+                // If shouldPersist, persist immediately with the new data
+                if (shouldPersist) {
+                  const updatedSlide = newTutorial.slides.find((s) => s.slideId === slideId);
+                  if (updatedSlide) {
+                    persistSlideUpdate(updatedSlide);
+                  }
+                }
+                
+                return newTutorial;
+              });
             }}
             onBlur={() => handlePaneContentBlur(slideId)}
           />
@@ -1066,37 +2182,121 @@ export default function TutorialEditorPage() {
         <div style={styles.slidesSection}>
           <h3 style={styles.sidebarTitle}>Slides</h3>
           <ul style={styles.slideList}>
-            {tutorial.slides
-              ?.sort((a, b) => a.order - b.order)
-              .map((slide) => (
-                <li
-                  key={slide.slideId}
-                  draggable
-                  onClick={() => setActiveSlideId(slide.slideId)}
-                  onDragStart={(e) => handleDragStart(e, slide.slideId)}
-                  onDragEnd={handleDragEnd}
-                  onDragOver={(e) => handleDragOver(e, slide.slideId)}
-                  onDragLeave={handleDragLeave}
-                  onDrop={(e) => handleDrop(e, slide.slideId)}
-                  style={{
-                    ...styles.slideItem,
-                    backgroundColor:
-                      slide.slideId === activeSlideId ? "#f5e6e4" : "#fff",
-                    borderColor:
-                      slide.slideId === activeSlideId ? "#7B2D26" : "#e5e7eb",
-                    ...(dragOverSlideId === slide.slideId && draggedSlideId !== slide.slideId
-                      ? styles.slideItemDragOver
-                      : {}),
-                    ...(draggedSlideId === slide.slideId
-                      ? styles.slideItemDragging
-                      : {}),
-                  }}
-                >
-                  <span style={styles.slideDragHandle}>⋮⋮</span>
-                  <span style={styles.slideOrder}>{slide.order}</span>
-                  <span style={styles.slideTitle}>{slide.title || "Untitled"}</span>
-                </li>
-              ))}
+            {(() => {
+              const allSlides = tutorial.slides || [];
+              const regularSlides = buildRegularSlideOrder(allSlides);
+              const branchChildMap = buildBranchChildrenMap(allSlides);
+
+              // Recursively render a slide and its branch children
+              const renderSlideItem = (slide, displayNum, depth = 0) => {
+                const isBranch = Boolean(slide.isBranchSlide);
+                const children = branchChildMap[slide.slideId] || [];
+
+                return (
+                  <li key={slide.slideId} style={{ listStyle: 'none' }}>
+                    <div
+                      draggable={!isPublished && !isBranch}
+                      onClick={() => setActiveSlideId(slide.slideId)}
+                      onDragStart={isPublished || isBranch ? undefined : (e) => handleDragStart(e, slide.slideId)}
+                      onDragEnd={isPublished || isBranch ? undefined : handleDragEnd}
+                      onDragOver={isPublished || isBranch ? undefined : (e) => handleDragOver(e, slide.slideId)}
+                      onDragLeave={isPublished || isBranch ? undefined : handleDragLeave}
+                      onDrop={isPublished || isBranch ? undefined : (e) => handleDrop(e, slide.slideId)}
+                      style={{
+                        ...styles.slideItem,
+                        marginLeft: depth > 0 ? `${depth * 16}px` : 0,
+                        backgroundColor: slide.slideId === activeSlideId ? "#f5e6e4" : "#fff",
+                        borderColor: slide.slideId === activeSlideId ? "#7B2D26" : "#e5e7eb",
+                        borderStyle: isBranch ? 'dashed' : 'solid',
+                        cursor: isBranch ? 'pointer' : (isPublished ? 'default' : 'grab'),
+                        ...(dragOverSlideId === slide.slideId && draggedSlideId !== slide.slideId
+                          ? styles.slideItemDragOver : {}),
+                        ...(draggedSlideId === slide.slideId
+                          ? styles.slideItemDragging : {}),
+                      }}
+                    >
+                      {!isPublished && !isBranch && <span style={styles.slideDragHandle}>⋮⋮</span>}
+                      {isBranch && <span style={styles.branchIndicator} title="Branch slide">↳</span>}
+                      <span style={{
+                        ...styles.slideOrder,
+                        backgroundColor: isBranch ? '#6b7280' : '#7B2D26',
+                        fontSize: isBranch ? '10px' : '12px',
+                        minWidth: isBranch ? '28px' : '24px',
+                        width: 'auto',
+                        padding: '0 4px',
+                      }}>{displayNum}</span>
+                      <span style={styles.slideTitle}>{slide.title || "Untitled"}</span>
+                      {!isSlideValid(slide) && (
+                        <span style={styles.slideWarningBadge} role="img" aria-label="Incomplete slide" title="This slide has incomplete content">⚠️</span>
+                      )}
+                    </div>
+                    {/* Render branch children indented */}
+                    {children.length > 0 && (
+                      <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                        {children.map((child, ci) => {
+                          const childNum = `${displayNum}.${ci + 1}`;
+                          return renderSlideItem(child, childNum, depth + 1);
+                        })}
+                      </ul>
+                    )}
+                  </li>
+                );
+              };
+
+              const nextOrder = regularSlides.length + 1;
+
+              return (
+                <>
+                  {regularSlides.map((slide, idx) =>
+                    renderSlideItem(slide, String(idx + 1), 0),
+                  )}
+                  <li key="__gots_add_slide__" style={{ listStyle: "none" }}>
+                    <div style={styles.addSlideListSlot}>
+                      {!isPublished && (
+                        <span
+                          style={{ ...styles.slideDragHandle, visibility: "hidden" }}
+                          aria-hidden
+                        >
+                          ⋮⋮
+                        </span>
+                      )}
+                      <span
+                        style={{
+                          ...styles.slideOrder,
+                          backgroundColor: isPublished ? "#e5e7eb" : "#c4b4b2",
+                          color: "#fff",
+                        }}
+                        title="Next slide position"
+                      >
+                        {nextOrder}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={
+                          !isPublished && isActiveSlideValid ? handleAddSlide : undefined
+                        }
+                        disabled={isPublished || !isActiveSlideValid}
+                        style={{
+                          ...styles.addSlideTextButton,
+                          ...(!isPublished && isActiveSlideValid
+                            ? {}
+                            : styles.addSlideTextButtonDisabled),
+                        }}
+                        title={
+                          isPublished
+                            ? "Cannot add slides to a published tutorial"
+                            : isActiveSlideValid
+                              ? "Add new slide"
+                              : "Complete the current slide before adding a new one"
+                        }
+                      >
+                        + Add slide
+                      </button>
+                    </div>
+                  </li>
+                </>
+              );
+            })()}
           </ul>
         </div>
       </aside>
@@ -1105,19 +2305,73 @@ export default function TutorialEditorPage() {
       <main style={styles.main}>
         <div style={styles.header}>
           <div style={styles.headerLeft}>
-            <h1 style={styles.pageTitle}>{tutorial.title || "Untitled Tutorial"}</h1>
-            <span style={styles.statusBadge}>
+            {isPublished ? (
+              <h1 style={styles.pageTitle}>
+                {tutorial.title || "Untitled Tutorial"}
+              </h1>
+            ) : isEditingTitle ? (
+              <input
+                ref={titleInputRef}
+                type="text"
+                value={editingTitleValue}
+                onChange={(e) => setEditingTitleValue(e.target.value)}
+                onBlur={handleTutorialTitleBlur}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleTutorialTitleBlur();
+                  } else if (e.key === 'Escape') {
+                    setIsEditingTitle(false);
+                    setEditingTitleValue(tutorial.title || "");
+                  }
+                }}
+                style={styles.pageTitleInput}
+                autoFocus
+              />
+            ) : (
+              <h1
+                style={styles.pageTitleClickable}
+                onClick={() => {
+                  setEditingTitleValue(tutorial.title || "");
+                  setIsEditingTitle(true);
+                }}
+                title="Click to edit tutorial title"
+              >
+                {tutorial.title || "Untitled Tutorial"}
+              </h1>
+            )}
+            <span style={{
+              ...styles.statusBadge,
+              ...(tutorial.status === 'published'
+                ? { backgroundColor: '#dcfce7', color: '#166534' }
+                : { backgroundColor: '#fef3c7', color: '#92400e' }),
+            }}>
               {tutorial.status || "Draft"}
             </span>
           </div>
           <div style={styles.headerRight}>
             {saveStatus && <span style={styles.saveStatus}>{saveStatus}</span>}
+            {/* Tutorial-wide settings button */}
             <button
-              onClick={handleAddSlide}
-              style={styles.addSlideButton}
-              title="Add new slide"
+              onClick={() => setShowTutorialSettings(true)}
+              style={styles.settingsIconButton}
+              title="Tutorial Settings"
             >
-              +
+              ⚙
+            </button>
+            {/* Preview button — opens the student playback in a new tab */}
+            <button
+              onClick={() => {
+                const config = window.gotsConfig || {};
+                const siteUrl = config.siteUrl || window.location.origin;
+                const slideQ = activeSlideId
+                  ? `&slide=${encodeURIComponent(activeSlideId)}`
+                  : "";
+                window.open(`${siteUrl}/gots/play/${id}?preview=1${slideQ}`, '_blank');
+              }}
+              style={styles.previewButton}
+              title="Preview from the current slide as a student (branching is included)"
+            >
+              Preview
             </button>
           </div>
         </div>
@@ -1126,13 +2380,19 @@ export default function TutorialEditorPage() {
           <div style={styles.slideEditor}>
             {/* slide Title */}
             <div style={styles.titleRow}>
-              <label style={styles.titleLabel}>Slide Title:</label>
+              <label style={styles.titleLabel}>
+                Slide {getDisplaySlideNumber(activeSlide, tutorial.slides || [])}:
+              </label>
               <input
                 type="text"
                 value={activeSlide.title || ""}
-                onChange={(e) => handleTitleChange(activeSlide.slideId, e.target.value)}
-                onBlur={() => handleTitleBlur(activeSlide.slideId)}
-                style={styles.titleInput}
+                onChange={isPublished ? undefined : (e) => handleTitleChange(activeSlide.slideId, e.target.value)}
+                onBlur={isPublished ? undefined : () => handleTitleBlur(activeSlide.slideId)}
+                readOnly={isPublished}
+                style={{
+                  ...styles.titleInput,
+                  ...(isPublished ? { backgroundColor: '#f3f4f6', color: '#6b7280', cursor: 'default' } : {}),
+                }}
               />
             </div>
 
@@ -1152,20 +2412,227 @@ export default function TutorialEditorPage() {
               )}
             </div>
 
+            {/* Validation errors */}
+            {activeSlideErrors.length > 0 && (
+              <div style={styles.slideValidationContainer}>
+                <div style={styles.slideValidationBanner}>
+                  <strong>This slide is incomplete:</strong>
+                  <ul style={styles.slideValidationList}>
+                    {activeSlideErrors.map((err, i) => (
+                      <li key={i}>{err}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            {/* Configurations section (branch config) */}
+            <BranchConfigEditor
+              slide={activeSlide}
+              allSlides={tutorial.slides || []}
+              isPublished={isPublished}
+              tutorialLayoutSettings={layoutSettings}
+              onSlidePatch={(updates) => handleSlidePatch(activeSlide.slideId, updates)}
+            />
+
+
             {/* done Editing Button */}
             <div style={styles.doneButtonContainer}>
               <button
-                style={styles.doneButton}
-                onClick={() => navigate(`/tutorials?highlight=${id}`)}
+                style={{
+                  ...styles.deleteSlideButton,
+                  ...(isPublished ? { opacity: 0.4, cursor: 'not-allowed', borderColor: '#d1d5db', color: '#9ca3af' } : {}),
+                }}
+                onClick={isPublished ? undefined : () => handleDeleteSlide(activeSlide.slideId)}
+                disabled={isPublished}
+                title={isPublished ? "Cannot delete slides from a published tutorial" : "Permanently delete this slide"}
               >
-                Done Editing
+                Delete Slide
+              </button>
+              <button
+                disabled={!isPublished && !isActiveSlideValid}
+                style={{
+                  ...styles.doneButton,
+                  ...(!isPublished && !isActiveSlideValid ? styles.doneButtonDisabled : {}),
+                }}
+                onClick={async () => {
+                  if (!isPublished) {
+                    if (!isActiveSlideValid) return;
+                    // Save the current slide before navigating to ensure no data is lost
+                    if (activeSlideId) {
+                      const currentSlide = tutorialRef.current?.slides?.find((s) => s.slideId === activeSlideId);
+                      if (currentSlide) {
+                        setSaveStatus("Saving...");
+                        try {
+                          await persistSlideUpdate(currentSlide);
+                        } catch (err) {
+                          console.error("Error saving before navigation:", err);
+                        }
+                      }
+                    }
+                  }
+                  navigate(`/tutorials?highlight=${id}`);
+                }}
+              >
+                {isPublished ? 'Back to Tutorials' : 'Done Editing'}
               </button>
             </div>
           </div>
         ) : (
           <p>Select a slide from the sidebar to edit.</p>
         )}
+
       </main>
+
+      {/* Tutorial Settings Modal */}
+      {showTutorialSettings && (
+        <div style={styles.modalOverlay} onClick={certSaving ? undefined : handleCloseTutorialSettings}>
+          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>Tutorial Settings</h2>
+              <button onClick={certSaving ? undefined : handleCloseTutorialSettings} disabled={certSaving} style={styles.modalCloseButton} title="Close">✕</button>
+            </div>
+
+            {/* Certificate Settings Section */}
+            <div style={styles.modalSection}>
+              <h3 style={styles.modalSectionTitle}>Certificate Settings</h3>
+
+              <label style={styles.certPanelLabel}>
+                <input
+                  type="checkbox"
+                  checked={!!certSettings.enabled}
+                  onChange={(e) => setCertSettings((p) => ({ ...p, enabled: e.target.checked }))}
+                  style={{ marginRight: "6px" }}
+                />
+                Enable completion certificate for this tutorial
+              </label>
+
+              {certSettings.enabled && (
+                <>
+                  <div style={{ marginTop: "12px" }}>
+                    <label style={styles.certPanelFieldLabel}>Certificate Template</label>
+                    {certSettings.template_id &&
+                      !certTemplates.some((t) => t.id === certSettings.template_id) && (
+                        <p style={{ fontSize: "12px", color: "#b45309", marginBottom: "4px" }}>
+                          The previously selected template has been deleted. The default template will be used until you select another.
+                        </p>
+                    )}
+                    <select
+                      value={certSettings.template_id || ""}
+                      onChange={(e) => setCertSettings((p) => ({ ...p, template_id: e.target.value ? Number(e.target.value) : null }))}
+                      style={styles.certPanelSelect}
+                    >
+                      <option value="">— Use default template —</option>
+                      {certTemplates.map((t) => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div style={{ marginTop: "12px" }}>
+                    <label style={styles.certPanelFieldLabel}>Issuer Name Override</label>
+                    <input
+                      type="text"
+                      value={certSettings.issuer_name || ""}
+                      onChange={(e) => setCertSettings((p) => ({ ...p, issuer_name: e.target.value }))}
+                      placeholder="Leave blank to use site name"
+                      style={styles.certPanelInput}
+                      maxLength={191}
+                    />
+                  </div>
+                </>
+              )}
+
+              {certSaveStatus && (
+                <span style={{ fontSize: "13px", marginTop: "8px", display: "block", color: certSaveStatus.startsWith("Error") ? "#dc2626" : "#16a34a" }}>
+                  {certSaveStatus}
+                </span>
+              )}
+            </div>
+
+            {/* Tutorial Theme Section */}
+            <div style={styles.modalSection}>
+              <h3 style={styles.modalSectionTitle}>Tutorial Theme</h3>
+              <div>
+                <label style={styles.certPanelFieldLabel}>Theme</label>
+                <select
+                  value={themeSettings.theme_id || ""}
+                  onChange={(e) => setThemeSettings((p) => ({ ...p, theme_id: e.target.value ? Number(e.target.value) : null }))}
+                  style={styles.certPanelSelect}
+                >
+                  <option value="">— Use default theme —</option>
+                  {availableThemes.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}{Number(t.is_default) === 1 ? " (default)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {themeSaveStatus && (
+                <span style={{ fontSize: "13px", marginTop: "8px", display: "block", color: themeSaveStatus.startsWith("Error") ? "#dc2626" : "#16a34a" }}>
+                  {themeSaveStatus}
+                </span>
+              )}
+            </div>
+
+            {/* Layout Settings Section */}
+            <div style={styles.modalSection}>
+              <h3 style={styles.modalSectionTitle}>Layout Settings</h3>
+              <div>
+                <label style={styles.certPanelFieldLabel}>Left pane width</label>
+                <p style={{ fontSize: "12px", color: "#9ca3af", margin: "0 0 8px 0" }}>
+                  Controls the playback width split between the slide content and interactive content.
+                </p>
+                <label style={{ ...styles.branchCheckboxLabel, marginBottom: "10px" }}>
+                  <input
+                    type="checkbox"
+                    checked={layoutSettings.leftPaneRatio === null}
+                    onChange={(e) =>
+                      setLayoutSettings((p) => ({
+                        ...p,
+                        leftPaneRatio: e.target.checked ? null : LAYOUT_DEFAULT_LEFT_RATIO,
+                      }))
+                    }
+                  />
+                  Use system default ({LAYOUT_DEFAULT_LEFT_RATIO}% - 70%)
+                </label>
+                {layoutSettings.leftPaneRatio !== null && (
+                  <>
+                    <input
+                      type="range"
+                      min={LAYOUT_MIN_LEFT_RATIO}
+                      max={LAYOUT_MAX_LEFT_RATIO}
+                      step="1"
+                      value={layoutSettings.leftPaneRatio}
+                      onChange={(e) => setLayoutSettings((p) => ({ ...p, leftPaneRatio: Number(e.target.value) }))}
+                      style={{ width: "100%", cursor: "pointer" }}
+                    />
+                    <p style={{ fontSize: "12px", color: "#6b7280", marginTop: "4px" }}>
+                      Left pane: {layoutSettings.leftPaneRatio}% · Right pane: {100 - layoutSettings.leftPaneRatio}%
+                    </p>
+                  </>
+                )}
+              </div>
+              {layoutSaveStatus && (
+                <span style={{ fontSize: "13px", marginTop: "8px", display: "block", color: layoutSaveStatus.startsWith("Error") ? "#dc2626" : "#16a34a" }}>
+                  {layoutSaveStatus}
+                </span>
+              )}
+            </div>
+
+            <div style={styles.modalFooter}>
+              <span style={{ fontSize: "12px", color: "#9ca3af" }}>Settings are saved when you click Done.</span>
+              <button
+                onClick={handleCloseTutorialSettings}
+                disabled={certSaving}
+                style={certSaving ? { ...styles.certSaveButton, opacity: 0.6 } : styles.certSaveButton}
+              >
+                {certSaving ? "Saving…" : "Done"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1229,7 +2696,36 @@ const styles = {
     padding: 0,
     margin: 0,
     flex: 1,
+    minHeight: 0,
     overflowY: "auto",
+  },
+  addSlideListSlot: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    padding: "10px 12px",
+    marginBottom: "8px",
+    borderRadius: "6px",
+    border: "1px dashed #d1d5db",
+    backgroundColor: "#fafafa",
+  },
+  addSlideTextButton: {
+    flex: 1,
+    minWidth: 0,
+    textAlign: "left",
+    padding: "6px 4px",
+    fontSize: "14px",
+    fontWeight: "500",
+    color: "#7B2D26",
+    backgroundColor: "transparent",
+    border: "none",
+    borderRadius: "4px",
+    cursor: "pointer",
+    transition: "background-color 0.15s ease",
+  },
+  addSlideTextButtonDisabled: {
+    color: "#9ca3af",
+    cursor: "not-allowed",
   },
   slideItem: {
     display: "flex",
@@ -1280,6 +2776,12 @@ const styles = {
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
+    flex: 1,
+  },
+  slideWarningBadge: {
+    fontSize: "14px",
+    flexShrink: 0,
+    marginLeft: "auto",
   },
   main: {
     flex: 1,
@@ -1309,36 +2811,47 @@ const styles = {
     fontWeight: "600",
     color: "#111827",
   },
+  pageTitleClickable: {
+    margin: 0,
+    fontSize: "24px",
+    fontWeight: "600",
+    color: "#111827",
+    cursor: "pointer",
+    padding: "4px 8px",
+    borderRadius: "6px",
+    border: "2px solid transparent",
+    transition: "border-color 0.15s ease, background-color 0.15s ease",
+  },
+  pageTitleInput: {
+    margin: 0,
+    fontSize: "24px",
+    fontWeight: "600",
+    color: "#111827",
+    padding: "4px 8px",
+    borderRadius: "6px",
+    border: "2px solid #7B2D26",
+    outline: "none",
+    backgroundColor: "#fff",
+    minWidth: "300px",
+  },
   statusBadge: {
     display: "inline-block",
     padding: "4px 10px",
     fontSize: "12px",
     fontWeight: "500",
     borderRadius: "9999px",
-    backgroundColor: "#fef3c7",
-    color: "#92400e",
     textTransform: "capitalize",
   },
-  addSlideButton: {
-    width: "36px",
-    height: "36px",
-    minWidth: "36px",
-    minHeight: "36px",
-    borderRadius: "50%",
-    border: "none",
-    backgroundColor: "#7B2D26",
-    color: "#fff",
-    fontSize: "20px",
-    fontWeight: "600",
+  previewButton: {
+    padding: "8px 14px",
+    fontSize: "13px",
+    fontWeight: "500",
+    backgroundColor: "#fff",
+    color: "#374151",
+    border: "1px solid #d1d5db",
+    borderRadius: "6px",
     cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    lineHeight: "1",
-    padding: "0",
-    margin: "0",
-    transition: "background-color 0.15s ease",
-    boxSizing: "border-box",
+    transition: "all 0.15s ease",
   },
   saveStatus: {
     fontSize: "14px",
@@ -1374,10 +2887,22 @@ const styles = {
   },
   doneButtonContainer: {
     display: "flex",
-    justifyContent: "flex-end",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginTop: "32px",
     paddingTop: "24px",
     borderTop: "1px solid #e5e7eb",
+  },
+  deleteSlideButton: {
+    padding: "12px 24px",
+    fontSize: "14px",
+    fontWeight: "500",
+    cursor: "pointer",
+    backgroundColor: "#fff",
+    color: "#dc2626",
+    border: "1px solid #dc2626",
+    borderRadius: "6px",
+    transition: "background-color 0.15s ease",
   },
   doneButton: {
     padding: "12px 24px",
@@ -1389,6 +2914,28 @@ const styles = {
     border: "none",
     borderRadius: "6px",
     transition: "background-color 0.15s ease",
+  },
+  doneButtonDisabled: {
+    opacity: 0.4,
+    cursor: "not-allowed",
+    backgroundColor: "#9ca3af",
+  },
+  slideValidationContainer: {
+    marginTop: "24px",
+  },
+  slideValidationBanner: {
+    padding: "14px 18px",
+    backgroundColor: "#fffbeb",
+    border: "1px solid #fcd34d",
+    borderRadius: "8px",
+    color: "#92400e",
+    fontSize: "13px",
+    lineHeight: "1.5",
+  },
+  slideValidationList: {
+    margin: "8px 0 0 0",
+    paddingLeft: "20px",
+    listStyleType: "disc",
   },
   paneContainer: {
     padding: "16px",
@@ -1440,6 +2987,13 @@ const styles = {
     flexDirection: "column",
     gap: "8px",
   },
+  embedHint: {
+    fontSize: "12px",
+    color: "#6b7280",
+    fontStyle: "italic",
+    margin: "4px 0 0 0",
+    lineHeight: "1.4",
+  },
   input: {
     width: "100%",
     padding: "10px 12px",
@@ -1489,6 +3043,17 @@ const styles = {
     overflowY: "auto",
     outline: "none",
     lineHeight: "1.5",
+  },
+  validationBanner: {
+    padding: "12px 16px",
+    backgroundColor: "#fef2f2",
+    border: "1px solid #fca5a5",
+    borderRadius: "6px",
+    color: "#991b1b",
+    fontSize: "13px",
+    fontWeight: "500",
+    lineHeight: "1.5",
+    marginBottom: "8px",
   },
   // MCQ Editor styles
   mcqContainer: {
@@ -1676,6 +3241,31 @@ const styles = {
     borderRadius: "6px",
     border: "1px solid #e5e7eb",
   },
+  mediaAudio: {
+    width: "100%",
+    marginTop: "4px",
+  },
+  mediaFileCard: {
+    padding: "16px",
+    border: "1px solid #e5e7eb",
+    borderRadius: "8px",
+    backgroundColor: "#f9fafb",
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+  },
+  mediaFileTitle: {
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#111827",
+    wordBreak: "break-word",
+  },
+  mediaFileHint: {
+    margin: 0,
+    fontSize: "12px",
+    color: "#6b7280",
+    lineHeight: 1.45,
+  },
   mediaInfo: {
     display: "flex",
     alignItems: "center",
@@ -1763,5 +3353,239 @@ const styles = {
     border: "1px solid #d1d5db",
     borderRadius: "6px",
     boxSizing: "border-box",
+  },
+
+  // ── Branch / Configurations section ──────────────────────────────────────
+  configurationsContainer: {
+    marginTop: "24px",
+    borderTop: "1px solid #e5e7eb",
+    paddingTop: "16px",
+  },
+  configurationsToggle: {
+    display: "flex",
+    alignItems: "center",
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    fontSize: "14px",
+    fontWeight: "600",
+    color: "#374151",
+    padding: "4px 0",
+    gap: "6px",
+  },
+  configurationsChevron: {
+    fontSize: "10px",
+    color: "#6b7280",
+  },
+  configurationsBody: {
+    marginTop: "12px",
+    padding: "16px",
+    backgroundColor: "#f9fafb",
+    borderRadius: "8px",
+    border: "1px solid #e5e7eb",
+  },
+  branchCheckboxLabel: {
+    display: "flex",
+    alignItems: "center",
+    fontSize: "14px",
+    fontWeight: "500",
+    color: "#111827",
+    cursor: "pointer",
+    userSelect: "none",
+  },
+  branchNote: {
+    marginTop: "8px",
+    fontSize: "13px",
+    color: "#6b7280",
+    lineHeight: "1.5",
+  },
+  branchConfigForm: {
+    marginTop: "16px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+  },
+  branchField: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+  },
+  branchLabel: {
+    fontSize: "13px",
+    fontWeight: "500",
+    color: "#374151",
+  },
+  branchSelect: {
+    padding: "8px 10px",
+    fontSize: "13px",
+    border: "1px solid #d1d5db",
+    borderRadius: "6px",
+    backgroundColor: "#fff",
+    color: "#111827",
+    cursor: "pointer",
+  },
+  branchInlineSelect: {
+    padding: "4px 8px",
+    fontSize: "13px",
+    minWidth: "80px",
+  },
+  branchConditionRow: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "8px",
+    padding: "10px 12px",
+    backgroundColor: "#f3f4f6",
+    border: "1px solid #e5e7eb",
+    borderRadius: "6px",
+    fontSize: "13px",
+    color: "#374151",
+  },
+  branchConditionText: {
+    fontSize: "13px",
+    color: "#374151",
+  },
+  branchErrorList: {
+    marginTop: "8px",
+    padding: "10px 12px",
+    backgroundColor: "#fef2f2",
+    border: "1px solid #fecaca",
+    borderRadius: "6px",
+  },
+  branchErrorItem: {
+    fontSize: "13px",
+    color: "#991b1b",
+    marginBottom: "4px",
+  },
+  // Sidebar branch-slide indicator
+  branchIndicator: {
+    color: "#6b7280",
+    fontSize: "14px",
+    fontWeight: "700",
+    flexShrink: 0,
+    marginRight: "2px",
+  },
+  // Shared read-only style for selects/inputs inside published-mode UI
+  readOnlyInput: {
+    backgroundColor: "#f3f4f6",
+    color: "#6b7280",
+    cursor: "default",
+  },
+  // Tutorial settings icon button (gear)
+  settingsIconButton: {
+    width: "36px",
+    height: "36px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "20px",
+    background: "none",
+    border: "1px solid #d1d5db",
+    borderRadius: "8px",
+    cursor: "pointer",
+    color: "#374151",
+    transition: "background-color 0.15s",
+  },
+  // Tutorial settings modal
+  modalOverlay: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 9999,
+  },
+  modalContent: {
+    backgroundColor: "white",
+    borderRadius: "12px",
+    width: "480px",
+    maxWidth: "90vw",
+    maxHeight: "80vh",
+    overflow: "auto",
+    boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+  },
+  modalHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "20px 24px 0",
+  },
+  modalTitle: {
+    margin: 0,
+    fontSize: "18px",
+    fontWeight: "600",
+    color: "#111827",
+  },
+  modalCloseButton: {
+    background: "none",
+    border: "none",
+    fontSize: "18px",
+    cursor: "pointer",
+    color: "#6b7280",
+    padding: "4px 8px",
+    borderRadius: "4px",
+  },
+  modalSection: {
+    padding: "20px 24px",
+  },
+  modalSectionTitle: {
+    fontSize: "15px",
+    fontWeight: "600",
+    color: "#374151",
+    marginTop: 0,
+    marginBottom: "14px",
+  },
+  modalFooter: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "16px 24px",
+    borderTop: "1px solid #e5e7eb",
+  },
+  certPanelLabel: {
+    display: "flex",
+    alignItems: "center",
+    fontSize: "14px",
+    color: "#374151",
+    cursor: "pointer",
+  },
+  certPanelFieldLabel: {
+    display: "block",
+    fontSize: "13px",
+    fontWeight: "500",
+    color: "#374151",
+    marginBottom: "4px",
+  },
+  certPanelSelect: {
+    width: "100%",
+    padding: "7px 10px",
+    fontSize: "14px",
+    border: "1px solid #d1d5db",
+    borderRadius: "6px",
+    backgroundColor: "white",
+    boxSizing: "border-box",
+  },
+  certPanelInput: {
+    width: "100%",
+    padding: "7px 10px",
+    fontSize: "14px",
+    border: "1px solid #d1d5db",
+    borderRadius: "6px",
+    boxSizing: "border-box",
+    outline: "none",
+  },
+  certSaveButton: {
+    padding: "8px 16px",
+    fontSize: "13px",
+    fontWeight: "600",
+    backgroundColor: "#7B2D26",
+    color: "white",
+    border: "none",
+    borderRadius: "6px",
+    cursor: "pointer",
   },
 };

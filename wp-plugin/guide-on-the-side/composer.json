@@ -1,0 +1,16 @@
+{
+    "name": "guide-on-the-side/guide-on-the-side",
+    "description": "WordPress plugin: Guide on the Side — interactive tutorial creator",
+    "type": "wordpress-plugin",
+    "require": {
+        "php": ">=7.4",
+        "dompdf/dompdf": "^2.0"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "classmap-authoritative": false
+    },
+    "autoload": {
+        "psr-4": {}
+    }
+}

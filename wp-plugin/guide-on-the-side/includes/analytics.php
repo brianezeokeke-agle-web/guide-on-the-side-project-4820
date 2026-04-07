@@ -243,8 +243,9 @@ function gots_get_slide_performance($tutorial_id, $date_from = null, $date_to = 
             foreach ($decoded as $s) {
                 if (isset($s['slideId'])) {
                     $slide_meta[$s['slideId']] = array(
-                        'title' => isset($s['title']) ? $s['title'] : 'Untitled',
-                        'order' => isset($s['order']) ? (int) $s['order'] : 0,
+                        'title'         => isset($s['title']) ? $s['title'] : 'Untitled',
+                        'order'         => isset($s['order']) ? (int) $s['order'] : 0,
+                        'isBranchSlide' => !empty($s['isBranchSlide']),
                     );
                 }
             }
@@ -255,8 +256,9 @@ function gots_get_slide_performance($tutorial_id, $date_from = null, $date_to = 
     $result = array();
     foreach ($by_slide as $sid => $data) {
         if (isset($slide_meta[$sid])) {
-            $data['title'] = $slide_meta[$sid]['title'];
-            $data['order'] = $slide_meta[$sid]['order'];
+            $data['title']         = $slide_meta[$sid]['title'];
+            $data['order']         = $slide_meta[$sid]['order'];
+            $data['isBranchSlide'] = $slide_meta[$sid]['isBranchSlide'];
         } else {
             $data['title'] = 'Deleted Slide';
             $data['order'] = 9999;
@@ -271,6 +273,7 @@ function gots_get_slide_performance($tutorial_id, $date_from = null, $date_to = 
                 'slideId'        => $sid,
                 'title'          => $meta['title'],
                 'order'          => $meta['order'],
+                'isBranchSlide'  => $meta['isBranchSlide'],
                 'views'          => 0,
                 'proceeds'       => 0,
                 'conversionRate' => 0,

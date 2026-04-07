@@ -240,19 +240,55 @@ function gots_render_playback_page($tutorial_id, $post, $is_preview = false) {
         
         <?php
         // output configuration for the student app
+        $user_name = 'Guest';
+        if (is_user_logged_in()) {
+            $user = wp_get_current_user();
+            $user_name = !empty($user->display_name) ? $user->display_name : $user->user_login;
+        }
         $config = array(
             'tutorialId' => $tutorial_id,
             'restUrl'    => esc_url_raw(rest_url('gots/v1')),
             'homeUrl'    => esc_url_raw(home_url('/')),
             'siteName'   => get_bloginfo('name'),
             'isPreview'  => $is_preview,
+            'userName'   => $user_name,
             // HMAC token scoped to this tutorial — validates that analytics events originate from a real playback page
             'analyticsToken' => hash_hmac('sha256', 'gots_analytics_' . $tutorial_id, wp_salt('auth')),
         );
-        
-        // if preview mode, include the WP nonce so the student app can authenticate
-        if ($is_preview) {
+
+        // Certificate support: the completion proof is requested on-demand by the
+        // student app at the moment the tutorial is actually completed, not pre-issued
+        // here.  We only pass whether certificates are enabled so the UI can show
+        // or hide the certificate section without an extra round-trip.
+        $config['certificateEnabled'] = (bool) get_post_meta($tutorial_id, '_gots_certificate_enabled', true);
+
+        if (is_user_logged_in()) {
+            $current_user              = wp_get_current_user();
+            $config['currentUserName'] = $current_user->display_name;
+            $config['isLoggedIn']      = true;
+            // Required for REST cookie auth: without X-WP-Nonce, WP treats the user as logged out on API
+            // requests, so gots_get_student_identifier() would not match the proof (user id vs IP hash).
             $config['nonce'] = wp_create_nonce('wp_rest');
+        } else {
+            $config['currentUserName'] = '';
+            $config['isLoggedIn']      = false;
+        }
+
+        // Admin preview only: optional start slide (?slide=uuid).
+        // Validate that the UUID belongs to THIS tutorial's slides to prevent
+        // using a slide ID from a different tutorial.
+        if ($is_preview && current_user_can('edit_posts')) {
+            if (isset($_GET['slide'])) {
+                $raw_slide = sanitize_text_field(wp_unslash($_GET['slide']));
+                // slideId values are UUIDs from gots_generate_uuid()
+                if (preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $raw_slide)) {
+                    $slides_json = get_post_meta($tutorial_id, '_gots_slides', true);
+                    $slides_arr  = !empty($slides_json) ? json_decode($slides_json, true) : array();
+                    if (is_array($slides_arr) && in_array($raw_slide, array_column($slides_arr, 'slideId'), true)) {
+                        $config['startSlideId'] = $raw_slide;
+                    }
+                }
+            }
         }
         ?>
         <script>

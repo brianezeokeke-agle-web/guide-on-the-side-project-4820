@@ -63,6 +63,17 @@ async function fetchTutorial(tutorialId) {
   return response.json();
 }
 
+// Force all <a> tags inside WYSIWYG HTML to open in a new tab so
+// that author-inserted hyperlinks don't navigate away from the tutorial
+// and break the student's playback
+function openLinksInNewTab(node) {
+  if (!node) return;
+  node.querySelectorAll('a[href]').forEach((a) => {
+    a.setAttribute('target', '_blank');
+    a.setAttribute('rel', 'noopener noreferrer');
+  });
+}
+
 /**
  * Main Student App Component
  */
@@ -708,17 +719,6 @@ export default function StudentApp() {
       </footer>
     </div>
   );
-
-  // Force all <a> tags inside WYSIWYG HTML to open in a new tab so
-  // that the author-inserted hyperlinks don't navigate away from the tutorial
-  // and break the student's playback
-  function openLinksInNewTab(node) {
-    if (!node) return;
-    node.querySelectorAll('a[href]').forEach((a) => {
-      a.setAttribute('target', '_blank');
-      a.setAttribute('rel', 'noopener noreferrer');
-    });
-  }
 
   // Pane renderers
   function renderPane(pane, slideId) {

@@ -508,6 +508,7 @@ const styles = {
     flexGrow: 1,
     padding: "32px",
     backgroundColor: "#fff",
+    overflowY: "auto",
   },
   header: {
     display: "flex",

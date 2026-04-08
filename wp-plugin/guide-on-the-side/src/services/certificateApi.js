@@ -3,12 +3,13 @@
 function getConfig() {
   if (typeof window !== 'undefined' && window.gotsStudentConfig) {
     return {
-      baseUrl:         window.gotsStudentConfig.restUrl,
-      nonce:           window.gotsStudentConfig.nonce || null,
-      completionProof: window.gotsStudentConfig.completionProof || '',
+      baseUrl:          window.gotsStudentConfig.restUrl,
+      nonce:            window.gotsStudentConfig.nonce || null,
+      completionProof:  window.gotsStudentConfig.completionProof || '',
+      completionNonce:  window.gotsStudentConfig.completionNonce || '',
     };
   }
-  return { baseUrl: '/wp-json/gots/v1', nonce: null, completionProof: '' };
+  return { baseUrl: '/wp-json/gots/v1', nonce: null, completionProof: '', completionNonce: '' };
 }
 
 async function apiRequest(endpoint, options = {}) {
@@ -41,9 +42,10 @@ async function apiRequest(endpoint, options = {}) {
  * @returns {Promise<string>}  The completionProof token.
  */
 export async function requestCompletionProof(tutorialId) {
+  const { completionNonce } = getConfig();
   const response = await apiRequest(`/tutorials/${tutorialId}/certificate/completion-proof`, {
     method: 'POST',
-    body: JSON.stringify({}),
+    body: JSON.stringify({ completionNonce }),
   });
 
   if (!response.ok) {

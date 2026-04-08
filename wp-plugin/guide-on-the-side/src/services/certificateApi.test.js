@@ -14,6 +14,7 @@ describe('certificateApi', () => {
       restUrl,
       nonce: 'student-nonce',
       completionProof: mockProof,
+      completionNonce: 'test-completion-nonce',
     };
   });
 
@@ -199,7 +200,33 @@ describe('certificateApi', () => {
       `${restUrl}/tutorials/42/certificate/completion-proof`,
       expect.objectContaining({ method: 'POST' })
     );
+    const body = JSON.parse(fetch.mock.calls[0][1].body);
+    expect(body.completionNonce).toBe('test-completion-nonce');
     expect(proof).toBe('fresh-proof-token');
+  });
+
+  test('requestCompletionProof sends empty completionNonce when config is absent', async () => {
+    delete window.gotsStudentConfig;
+
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ completionProof: 'fallback-proof' }),
+    });
+
+    await requestCompletionProof(42);
+
+    const body = JSON.parse(fetch.mock.calls[0][1].body);
+    expect(body.completionNonce).toBe('');
+  });
+
+  test('requestCompletionProof throws on invalid or expired nonce', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      json: async () => ({ message: 'Invalid or expired completion nonce.' }),
+    });
+
+    await expect(requestCompletionProof(5)).rejects.toThrow('Invalid or expired completion nonce.');
   });
 
   test('requestCompletionProof throws when cert is disabled on tutorial', async () => {

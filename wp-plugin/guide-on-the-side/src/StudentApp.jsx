@@ -401,11 +401,14 @@ export default function StudentApp() {
     if (willComplete || !nextId) {
       // Tutorial complete
       if (!config.isPreview) {
+        // Fire-and-forget — analytics counting only; completion state is now
+        // recorded by the proof endpoint (gated by the per-session nonce).
         recordAnalyticsEvent(config.tutorialId, 'tutorial_completed');
         hasStarted.current          = false;
         lastViewedSlideId.current   = null;
-        // Request a fresh completion proof now that the student has genuinely
-        // finished.  Store it in state so issueCertificate can use it.
+        // Request the completion proof.  The proof endpoint validates the
+        // per-session nonce (embedded in gotsStudentConfig at page-render
+        // time) and writes the server-side completion record atomically.
         if (config.certificateEnabled) {
           requestCompletionProof(config.tutorialId)
             .then((proof) => setCompletionProof(proof))

@@ -507,6 +507,11 @@ function gots_issue_certificate($tutorial_id, $recipient_name, $completion_proof
         return new WP_Error('cert_disabled', 'Certificates are not enabled for this tutorial.', array('status' => 403));
     }
 
+    // 4b. Server-side completion verification (skip for admin preview issuance)
+    if (!$preview_issuance && !gots_has_completed($tutorial_id, $student_id)) {
+        return new WP_Error('not_completed', 'Tutorial has not been completed.', array('status' => 403));
+    }
+
     // 5. Existing active certificate for this student + tutorial — return without consuming rate limit.
     // Rows with status != 'issued' (e.g. revoked) must NOT be reused here: download validation only
     // accepts 'issued', otherwise the client gets a link that fails with "Certificate not found."
@@ -657,9 +662,11 @@ function gots_issue_certificate($tutorial_id, $recipient_name, $completion_proof
         return new WP_Error('db_error', 'Could not save certificate record.', array('status' => 500));
     }
 
-    gots_certificate_rate_limit_record_success($tutorial_id, $ip);
-
+    // Read insert_id immediately — any subsequent DB write (including the
+    // set_transient inside rate_limit_record_success) will overwrite $wpdb->insert_id.
     $cert_id = (int) $wpdb->insert_id;
+
+    gots_certificate_rate_limit_record_success($tutorial_id, $ip);
 
     // 11. Generate signed download token
     $dl       = gots_generate_download_token($cert_id);

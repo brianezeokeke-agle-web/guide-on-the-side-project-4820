@@ -39,6 +39,7 @@ require_once GOTS_PLUGIN_DIR . 'includes/analytics.php';
 require_once GOTS_PLUGIN_DIR . 'includes/pdf-renderer.php';
 require_once GOTS_PLUGIN_DIR . 'includes/certificate-templates.php';
 require_once GOTS_PLUGIN_DIR . 'includes/certificates.php';
+require_once GOTS_PLUGIN_DIR . 'includes/completion.php';
 require_once GOTS_PLUGIN_DIR . 'includes/tutorial-themes.php';
 
 /**
@@ -57,6 +58,9 @@ function gots_activate() {
     // create the certificate tables
     gots_create_certificate_templates_table();
     gots_create_certificates_table();
+
+    // create the completions table (server-side completion tracking)
+    gots_create_completions_table();
 
     // create the tutorial themes table
     gots_create_tutorial_themes_table();

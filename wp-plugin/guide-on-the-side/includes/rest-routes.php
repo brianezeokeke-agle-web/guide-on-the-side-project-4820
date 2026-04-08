@@ -461,6 +461,28 @@ function gots_rest_permissions_check_write($request) {
 }
 
 /**
+ * Per-object capability check for a specific tutorial.
+ *
+ * Ensures the current user has the requested capability (edit_post, delete_post)
+ * for the given tutorial ID.  Editors/Admins pass automatically; Authors and
+ * Contributors are restricted to their own posts.
+ *
+ * @param int    $tutorial_id
+ * @param string $capability  WordPress meta-capability, e.g. 'edit_post' or 'delete_post'.
+ * @return true|WP_Error
+ */
+function gots_check_tutorial_permission($tutorial_id, $capability = 'edit_post') {
+    if (!current_user_can($capability, $tutorial_id)) {
+        return new WP_Error(
+            'rest_forbidden',
+            __('You do not have permission to manage this tutorial.', 'guide-on-the-side'),
+            array('status' => 403)
+        );
+    }
+    return true;
+}
+
+/**
  * get argument definitions for tutorial creation
  *
  * @return array argument definitions
@@ -498,6 +520,11 @@ function gots_rest_list_tutorials($request) {
         'orderby'        => 'date',
         'order'          => 'DESC',
     );
+
+    // Scope to the current user's own tutorials unless they can edit others'
+    if (!current_user_can('edit_others_posts')) {
+        $args['author'] = get_current_user_id();
+    }
     
     $posts = get_posts($args);
     $tutorials = array();
@@ -528,6 +555,10 @@ function gots_rest_get_tutorial($request) {
             array('status' => 404)
         );
     }
+
+    // Per-object capability check
+    $perm = gots_check_tutorial_permission($id);
+    if (is_wp_error($perm)) return $perm;
     
     // check post status (only draft and publish are valid)
     if (!in_array($post->post_status, array('draft', 'publish'), true)) {
@@ -698,6 +729,10 @@ function gots_rest_update_tutorial($request) {
             array('status' => 404)
         );
     }
+
+    // Per-object capability check
+    $perm = gots_check_tutorial_permission($id);
+    if (is_wp_error($perm)) return $perm;
     
     // check post status (only draft and publish are valid)
     if (!in_array($post->post_status, array('draft', 'publish'), true)) {
@@ -953,6 +988,10 @@ function gots_rest_duplicate_tutorial($request) {
         );
     }
 
+    // Per-object capability check
+    $perm = gots_check_tutorial_permission($id);
+    if (is_wp_error($perm)) return $perm;
+
     // check post status (only draft and publish are valid)
     if (!in_array($post->post_status, array('draft', 'publish'), true)) {
         return new WP_Error(
@@ -1104,6 +1143,10 @@ function gots_rest_delete_tutorial($request) {
             array('status' => 404)
         );
     }
+
+    // Per-object capability check (delete_post, not edit_post)
+    $perm = gots_check_tutorial_permission($id, 'delete_post');
+    if (is_wp_error($perm)) return $perm;
     
     // delete all associated meta
     delete_post_meta($id, '_gots_description');
@@ -1236,6 +1279,9 @@ function gots_rest_get_analytics_summary($request) {
         return new WP_Error('tutorial_not_found', __('Tutorial not found.', 'guide-on-the-side'), array('status' => 404));
     }
 
+    $perm = gots_check_tutorial_permission($id);
+    if (is_wp_error($perm)) return $perm;
+
     $range   = gots_parse_date_range_params($request);
     $summary = gots_get_analytics_summary($id, $range['date_from'], $range['date_to']);
 
@@ -1256,6 +1302,9 @@ function gots_rest_get_analytics_trend($request) {
         return new WP_Error('tutorial_not_found', __('Tutorial not found.', 'guide-on-the-side'), array('status' => 404));
     }
 
+    $perm = gots_check_tutorial_permission($id);
+    if (is_wp_error($perm)) return $perm;
+
     $range = gots_parse_date_range_params($request);
     $trend = gots_get_analytics_trend($id, $range['date_from'], $range['date_to']);
 
@@ -1275,6 +1324,9 @@ function gots_rest_get_analytics_slides($request) {
     if (!$post || $post->post_type !== 'gots_tutorial') {
         return new WP_Error('tutorial_not_found', __('Tutorial not found.', 'guide-on-the-side'), array('status' => 404));
     }
+
+    $perm = gots_check_tutorial_permission($id);
+    if (is_wp_error($perm)) return $perm;
 
     $range  = gots_parse_date_range_params($request);
     $slides = gots_get_slide_performance($id, $range['date_from'], $range['date_to']);
@@ -1311,13 +1363,42 @@ function gots_rest_request_completion_proof($request) {
 
     $student_id = gots_get_student_identifier();
 
-    // Rate-limit proof requests: 5 per student per tutorial per hour
+    // Validate the per-session completion nonce that was issued when the
+    // playback page was rendered.  The nonce is tied to this student's
+    // session and is single-use — it is deleted immediately after
+    // validation so it cannot be replayed.  This ensures a completion
+    // record can only be written by someone who actually loaded the page,
+    // not by anyone who can call this REST endpoint with a harvested token.
+    $body            = $request->get_json_params() ?: array();
+    $supplied_nonce  = isset($body['completionNonce']) ? sanitize_text_field($body['completionNonce']) : '';
+    $nonce_key       = 'gots_cnonce_' . md5($student_id . '_' . $tutorial_id);
+    $stored_nonce    = get_transient($nonce_key);
+
+    if (empty($supplied_nonce) || !$stored_nonce || !hash_equals((string) $stored_nonce, $supplied_nonce)) {
+        return new WP_Error('invalid_nonce', 'Invalid or expired completion nonce.', array('status' => 403));
+    }
+
+    // Rate-limit check BEFORE consuming the nonce so a rejected request does
+    // not burn the nonce — the student would otherwise need a full page reload
+    // to obtain a new one just to hit the same rate-limit wall.
     $rl_key   = 'gots_proof_rl_' . substr(hash('sha256', $student_id . $tutorial_id), 0, 24);
     $rl_count = (int) get_transient($rl_key);
     if ($rl_count >= 5) {
         return new WP_Error('rate_limited', 'Too many proof requests. Please wait before trying again.', array('status' => 429));
     }
+
+    // Consume the nonce — single-use.  delete_transient returns false if the
+    // transient was already gone, which means a concurrent request consumed it
+    // first (TOCTOU guard: get + hash_equals above are not atomic with delete).
+    if (!delete_transient($nonce_key)) {
+        return new WP_Error('invalid_nonce', 'Invalid or expired completion nonce.', array('status' => 403));
+    }
+
     set_transient($rl_key, $rl_count + 1, HOUR_IN_SECONDS);
+
+    // Write the server-side completion record now that the nonce is validated.
+    // The certificate-issue endpoint verifies this record as a secondary gate.
+    gots_record_completion($tutorial_id, $student_id);
 
     $proof = gots_generate_completion_proof($tutorial_id, $student_id);
     return rest_ensure_response(array('completionProof' => $proof));
@@ -1648,6 +1729,9 @@ function gots_rest_update_tutorial_cert_settings($request) {
         return new WP_Error('tutorial_not_found', 'Tutorial not found.', array('status' => 404));
     }
 
+    $perm = gots_check_tutorial_permission($tutorial_id);
+    if (is_wp_error($perm)) return $perm;
+
     $settings = array(
         'enabled'     => !empty($params['enabled']),
         'template_id' => isset($params['templateId']) ? absint($params['templateId']) : 0,
@@ -1669,6 +1753,9 @@ function gots_rest_get_tutorial_cert_settings_endpoint($request) {
     if (!$post || $post->post_type !== 'gots_tutorial') {
         return new WP_Error('tutorial_not_found', 'Tutorial not found.', array('status' => 404));
     }
+
+    $perm = gots_check_tutorial_permission($tutorial_id);
+    if (is_wp_error($perm)) return $perm;
 
     return rest_ensure_response(gots_get_tutorial_cert_settings($tutorial_id));
 }
@@ -1762,6 +1849,9 @@ function gots_rest_get_tutorial_theme_settings_endpoint($request) {
         return new WP_Error('tutorial_not_found', 'Tutorial not found.', array('status' => 404));
     }
 
+    $perm = gots_check_tutorial_permission($tutorial_id);
+    if (is_wp_error($perm)) return $perm;
+
     return rest_ensure_response(gots_get_tutorial_theme_settings($tutorial_id));
 }
 
@@ -1779,6 +1869,9 @@ function gots_rest_update_tutorial_theme_settings($request) {
     if (!$post || $post->post_type !== 'gots_tutorial') {
         return new WP_Error('tutorial_not_found', 'Tutorial not found.', array('status' => 404));
     }
+
+    $perm = gots_check_tutorial_permission($tutorial_id);
+    if (is_wp_error($perm)) return $perm;
 
     // Sanitize and validate theme_id
     $theme_id = isset($params['themeId']) ? absint($params['themeId']) : 0;
@@ -1804,6 +1897,9 @@ function gots_rest_get_tutorial_layout_settings_endpoint($request) {
         return new WP_Error('tutorial_not_found', 'Tutorial not found.', array('status' => 404));
     }
 
+    $perm = gots_check_tutorial_permission($tutorial_id);
+    if (is_wp_error($perm)) return $perm;
+
     return rest_ensure_response(gots_get_tutorial_layout_settings($tutorial_id));
 }
 
@@ -1821,6 +1917,9 @@ function gots_rest_update_tutorial_layout_settings($request) {
     if (!$post || $post->post_type !== 'gots_tutorial') {
         return new WP_Error('tutorial_not_found', 'Tutorial not found.', array('status' => 404));
     }
+
+    $perm = gots_check_tutorial_permission($tutorial_id);
+    if (is_wp_error($perm)) return $perm;
 
     // leftPaneRatio: integer 10–50, or null/absent to clear the setting.
     // is_numeric() must come BEFORE absint() — absint("wide") silently returns 0,
@@ -1863,6 +1962,9 @@ function gots_rest_list_tutorial_certificates($request) {
     if (!$post || $post->post_type !== 'gots_tutorial') {
         return new WP_Error('tutorial_not_found', 'Tutorial not found.', array('status' => 404));
     }
+
+    $perm = gots_check_tutorial_permission($tutorial_id);
+    if (is_wp_error($perm)) return $perm;
 
     $limit  = min(absint($request->get_param('limit')  ?: 50), 200);
     $offset = absint($request->get_param('offset') ?: 0);

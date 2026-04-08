@@ -262,6 +262,21 @@ function gots_render_playback_page($tutorial_id, $post, $is_preview = false) {
         // or hide the certificate section without an extra round-trip.
         $config['certificateEnabled'] = (bool) get_post_meta($tutorial_id, '_gots_certificate_enabled', true);
 
+        // Per-session completion nonce — single-use, server-side validated.
+        // Generated here (at page-render time) so it is tied to an actual page
+        // load rather than to any callable API endpoint.  The proof endpoint
+        // validates and consumes it before writing the completion record, which
+        // is why the record is written there rather than from the analytics
+        // handler (the analytics token is static per-tutorial and could be
+        // harvested to forge completion events).
+        if ($config['certificateEnabled'] && !$is_preview) {
+            $student_hash         = gots_get_student_identifier();
+            $completion_nonce     = wp_generate_password(32, false);
+            $nonce_transient_key  = 'gots_cnonce_' . md5($student_hash . '_' . $tutorial_id);
+            set_transient($nonce_transient_key, $completion_nonce, 8 * HOUR_IN_SECONDS);
+            $config['completionNonce'] = $completion_nonce;
+        }
+
         if (is_user_logged_in()) {
             $current_user              = wp_get_current_user();
             $config['currentUserName'] = $current_user->display_name;

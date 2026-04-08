@@ -9,7 +9,7 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * Create/upgrade the analytics table.
+ * Create the analytics table.
  * Called on plugin activation and on admin_init (version check).
  */
 function gots_create_analytics_table() {
@@ -47,7 +47,7 @@ function gots_maybe_create_analytics_table() {
 }
 add_action('admin_init', 'gots_maybe_create_analytics_table');
 
-//we record analytics events here
+// Analytics events recording function.
 function gots_record_analytics_event($tutorial_id, $event_type, $slide_id = null, $date = null) {
     global $wpdb;
 
@@ -89,7 +89,7 @@ function gots_record_analytics_event($tutorial_id, $event_type, $slide_id = null
     return $result !== false;
 }
 
-//get tutorial level analytics
+// Get analytics summary data for a tutorial.
 function gots_get_analytics_summary($tutorial_id, $date_from = null, $date_to = null) {
     global $wpdb;
 
@@ -128,7 +128,7 @@ function gots_get_analytics_summary($tutorial_id, $date_from = null, $date_to = 
     );
 }
 
-//Get tutorial-level trend data grouped by day.
+// Get tutorial-level trend data grouped by day.
 function gots_get_analytics_trend($tutorial_id, $date_from = null, $date_to = null) {
     global $wpdb;
 
@@ -186,7 +186,7 @@ function gots_get_analytics_trend($tutorial_id, $date_from = null, $date_to = nu
     return array_values($by_date);
 }
 
-//get the slide level performance data for a tutorial
+// Get the slide level performance data for a tutorial
 function gots_get_slide_performance($tutorial_id, $date_from = null, $date_to = null) {
     global $wpdb;
 

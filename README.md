@@ -1,4 +1,4 @@
-# Guide on the Side — CS-4820 Group 9
+# Guide on the Side: CS-4820 Group 9
 
 A WordPress plugin that provides an interactive tutorial creation and management system for librarians and educators. Students can complete tutorials and receive PDF certificates of completion.
 

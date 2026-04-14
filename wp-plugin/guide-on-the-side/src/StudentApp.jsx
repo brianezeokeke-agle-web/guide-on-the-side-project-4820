@@ -292,15 +292,33 @@ export default function StudentApp() {
     const isCorrect    = isQuestionAnsweredCorrectly();
     const feedbackData = leftPane?.data?.feedback || {};
 
-    setFeedback((prev) => ({
-      ...prev,
-      [slideId]: {
-        correct: isCorrect,
-        message: isCorrect
-          ? (feedbackData.correct   || "Correct!")
-          : (feedbackData.incorrect || "That's not quite right. Please try again."),
-      },
-    }));
+    const newFeedback = {
+      correct: isCorrect,
+      message: isCorrect
+        ? (feedbackData.correct   || "Correct!")
+        : (feedbackData.incorrect || "That's not quite right. Please try again."),
+    };
+
+    setFeedback((prev) => ({ ...prev, [slideId]: newFeedback }));
+
+    if (!isCorrect) {
+      // Check whether a branch slide matches this wrong answer
+      const childBranches = branchChildrenMap[slideId] || [];
+      const matchedBranch = evaluateBranchMatch({
+        currentSlide,
+        answerState:   answers,
+        feedbackState: { ...feedback, [slideId]: newFeedback },
+        childBranches,
+      });
+
+      if (matchedBranch) {
+        if (!config.isPreview) {
+          recordAnalyticsEvent(config.tutorialId, 'slide_proceeded', slideId);
+        }
+        setHistoryStack((prev) => [...prev, slideId]);
+        setCurrentSlideId(matchedBranch.slideId);
+      }
+    }
   };
 
   // previous (history-based) 
@@ -312,60 +330,12 @@ export default function StudentApp() {
     setHistoryStack(rest);
   };
 
-  // next/complete 
+  // next/complete
   const handleNext = () => {
-    if (!currentSlide) return;
-
-    const slideId  = currentSlide.slideId;
-    const leftPane = currentSlide.leftPane;
-
-    // Required question: must answer correctly before proceeding
-    if (hasRequiredQuestion() && !feedback[slideId]?.correct) {
-      if (!answers[slideId]) return; // no answer selected yet
-
-      // Auto-submit the answer
-      const isCorrect    = isQuestionAnsweredCorrectly();
-      const feedbackData = leftPane?.data?.feedback || {};
-      const newFeedback  = {
-        correct: isCorrect,
-        message: isCorrect
-          ? (feedbackData.correct   || "Correct!")
-          : (feedbackData.incorrect || "That's not quite right. Please try again."),
-      };
-      setFeedback((prev) => ({ ...prev, [slideId]: newFeedback }));
-
-      if (!isCorrect) {
-        // Check whether a branch slide matches this wrong answer
-        const childBranches = branchChildrenMap[slideId] || [];
-        const matchedBranch = evaluateBranchMatch({
-          currentSlide,
-          answerState:   answers,
-          feedbackState: { ...feedback, [slideId]: newFeedback },
-          childBranches,
-        });
-
-        if (matchedBranch) {
-          // Navigate into the matching branch slide
-          if (!config.isPreview) {
-            recordAnalyticsEvent(config.tutorialId, 'slide_proceeded', slideId);
-          }
-          setHistoryStack((prev) => [...prev, slideId]);
-          setCurrentSlideId(matchedBranch.slideId);
-        }
-        // No matching branch — stay on slide so the student can try again
-        return;
-      }
-
-      // Correct: re-evaluate with updated feedback state inline
-      const updatedFeedback = { ...feedback, [slideId]: newFeedback };
-      navigateNext(updatedFeedback);
-      return;
-    }
-
     navigateNext(feedback);
   };
 
-  // Shared navigation logic — separated so handleNext can pass fresh feedback state
+  // Shared navigation logic used by handleNext and (indirectly) handleSubmitAnswer via branch navigation
   const navigateNext = (currentFeedback) => {
     if (!currentSlide) return;
 
@@ -708,13 +678,13 @@ export default function StudentApp() {
 
         <button
           onClick={handleNext}
-          disabled={hasRequiredQuestion() && !answers[currentSlide?.slideId]}
+          disabled={hasRequiredQuestion() && !feedback[currentSlide?.slideId]?.correct}
           style={{
             ...styles.navButton,
             ...styles.nextButton,
             ...tokensToButtonStyle(effectiveTokens),
-            opacity: (hasRequiredQuestion() && !answers[currentSlide?.slideId]) ? 0.5 : 1,
-            cursor:  (hasRequiredQuestion() && !answers[currentSlide?.slideId]) ? "not-allowed" : "pointer",
+            opacity: (hasRequiredQuestion() && !feedback[currentSlide?.slideId]?.correct) ? 0.5 : 1,
+            cursor:  (hasRequiredQuestion() && !feedback[currentSlide?.slideId]?.correct) ? "not-allowed" : "pointer",
           }}
         >
           {showCompleteButton ? "Complete" : "Next"}
@@ -791,6 +761,21 @@ export default function StudentApp() {
             </label>
           ))}
         </div>
+        {hasRequiredQuestion() && (
+          <button
+            onClick={handleSubmitAnswer}
+            disabled={!answers[slideId] || feedback[slideId]?.correct}
+            style={{
+              ...styles.navButton,
+              ...tokensToButtonStyle(effectiveTokens),
+              marginTop: "16px",
+              opacity: (!answers[slideId] || feedback[slideId]?.correct) ? 0.5 : 1,
+              cursor:  (!answers[slideId] || feedback[slideId]?.correct) ? "not-allowed" : "pointer",
+            }}
+          >
+            Check Answer
+          </button>
+        )}
       </div>
     );
   }
@@ -822,6 +807,21 @@ export default function StudentApp() {
           disabled={feedback[slideId]?.correct}
           style={styles.textInput}
         />
+        {hasRequiredQuestion() && (
+          <button
+            onClick={handleSubmitAnswer}
+            disabled={!answers[slideId] || feedback[slideId]?.correct}
+            style={{
+              ...styles.navButton,
+              ...tokensToButtonStyle(effectiveTokens),
+              marginTop: "16px",
+              opacity: (!answers[slideId] || feedback[slideId]?.correct) ? 0.5 : 1,
+              cursor:  (!answers[slideId] || feedback[slideId]?.correct) ? "not-allowed" : "pointer",
+            }}
+          >
+            Check Answer
+          </button>
+        )}
       </div>
     );
   }

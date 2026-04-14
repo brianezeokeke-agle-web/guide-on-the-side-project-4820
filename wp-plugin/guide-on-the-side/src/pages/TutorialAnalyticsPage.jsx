@@ -63,6 +63,9 @@ export default function TutorialAnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [retryCount, setRetryCount] = useState(0);
+  const [descExpanded, setDescExpanded] = useState(false);
+
+  const DESCRIPTION_LIMIT = 150;
 
   // Load tutorial metadata (re-runs on retry)
   useEffect(() => {
@@ -120,6 +123,26 @@ export default function TutorialAnalyticsPage() {
             <h1 style={styles.heading}>
               {tutorial ? tutorial.title : "Loading…"}
             </h1>
+            {tutorial?.description && (() => {
+              const full = tutorial.description;
+              const truncated = full.length > DESCRIPTION_LIMIT;
+              const displayed = truncated && !descExpanded
+                ? full.slice(0, DESCRIPTION_LIMIT).trimEnd() + "…"
+                : full;
+              return (
+                <p style={styles.description}>
+                  {displayed}
+                  {truncated && (
+                    <button
+                      style={styles.descToggle}
+                      onClick={() => setDescExpanded((v) => !v)}
+                    >
+                      {descExpanded ? "Show less" : "Show more"}
+                    </button>
+                  )}
+                </p>
+              );
+            })()}
             <p style={styles.subtitle}>
               Usage and completion analytics for this tutorial
             </p>
@@ -257,6 +280,23 @@ const styles = {
     fontSize: "24px",
     fontWeight: "700",
     color: "#111827",
+  },
+  description: {
+    margin: "6px 0 0 0",
+    fontSize: "14px",
+    color: "#374151",
+    lineHeight: "1.6",
+    maxWidth: "600px",
+  },
+  descToggle: {
+    background: "none",
+    border: "none",
+    padding: "0 0 0 6px",
+    fontSize: "13px",
+    fontWeight: "500",
+    color: "#7B2D26",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
   },
   subtitle: {
     margin: "2px 0 0 0",
